@@ -1,0 +1,115 @@
+{{- include "crip.validateAllocations" . -}}
+# Default deny for every pod in this release, then explicit allows.
+#
+# Backend egress needs (enforced by FQDN rules on the landing-zone firewall;
+# NetworkPolicy can only express ports/CIDRs):
+#   management.azure.com:443               Cost Management + subscriptions (user OBO token)
+#   login.microsoftonline.com:443          token validation keys, OBO exchange, Workload Identity
+#   *.services.ai.azure.com:443            Azure AI Foundry Agent Service
+#   *.openai.azure.com:443                 model inference (Foundry)
+#   *.vault.azure.net:443                  Key Vault (via CSI driver)
+#   *.in.applicationinsights.azure.com:443 telemetry
+#   *.postgres.database.azure.com:5432     PostgreSQL
+#   *.azurecr.io:443                       image pulls (kubelet, not pod traffic)
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "crip.fullname" . }}-default-deny
+  labels:
+    {{- include "crip.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "crip.selector" . | nindent 6 }}
+  policyTypes: [Ingress, Egress]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "crip.fullname" . }}-allow-dns
+  labels:
+    {{- include "crip.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "crip.selector" . | nindent 6 }}
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+      ports:
+        - { protocol: UDP, port: 53 }
+        - { protocol: TCP, port: 53 }
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "crip.fullname" . }}-frontend
+  labels:
+    {{- include "crip.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "crip.selector" . | nindent 6 }}
+      app.kubernetes.io/component: frontend
+  policyTypes: [Ingress, Egress]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ .Values.networkPolicy.ingressControllerNamespace }}
+      ports:
+        - { protocol: TCP, port: {{ .Values.frontend.port }} }
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              {{- include "crip.selector" . | nindent 14 }}
+              app.kubernetes.io/component: backend
+      ports:
+        - { protocol: TCP, port: {{ .Values.backend.port }} }
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "crip.fullname" . }}-backend-ingress
+  labels:
+    {{- include "crip.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "crip.selector" . | nindent 6 }}
+      app.kubernetes.io/component: backend
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              {{- include "crip.selector" . | nindent 14 }}
+              app.kubernetes.io/component: frontend
+      ports:
+        - { protocol: TCP, port: {{ .Values.backend.port }} }
+---
+# Backend and the agent-registration Job (label crip/egress=azure) may reach
+# Azure over HTTPS and PostgreSQL. Nothing else in the release gets egress.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "crip.fullname" . }}-azure-egress
+  labels:
+    {{- include "crip.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "crip.selector" . | nindent 6 }}
+      crip/egress: azure
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - ipBlock:
+            cidr: {{ .Values.networkPolicy.egressCidr }}
+      ports:
+        - { protocol: TCP, port: 443 }
+        - { protocol: TCP, port: 5432 }

@@ -1,0 +1,57 @@
+{
+  "role": "domain",
+  "key": "costpulse",
+  "name": "crip-costpulse",
+  "description": "CRIP domain agent: grounded Azure cost answers from the Cost Management Query API.",
+  "instructions_file": "costpulse.md",
+  "delegation_tool": {
+    "name": "ask_costpulse",
+    "description": "Ask the CostPulse agent about Azure spend: how much was spent, what costs the most, cost broken down by resource group, resource type or tag, for month-to-date, last month, or the last 7/30 days, and which subscriptions the user can see. Returns an answer grounded in live Azure Cost Management data, with the exact query and data timestamp."
+  },
+  "tools": [
+    {
+      "name": "costpulse_query_costs",
+      "description": "Query Azure Cost Management for actual cost at a scope, grouped by one dimension. Runs with the signed-in user's own Azure permissions. Returns a JSON contract with status (ok/partial/no_data/error), answer, data, query_used, data_timestamp, sources and caveats.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "scope": {
+            "type": "string",
+            "description": "Azure scope to query: a subscription id (GUID), /subscriptions/<id>, /subscriptions/<id>/resourceGroups/<name>, or /providers/Microsoft.Management/managementGroups/<id>. If the user has not identified one, call costpulse_list_subscriptions first."
+          },
+          "group_by": {
+            "type": "string",
+            "enum": ["resource_group", "resource_type", "tag"],
+            "description": "Dimension to group cost by. Defaults to resource_group."
+          },
+          "tag_key": {
+            "type": "string",
+            "description": "Tag name to group by. Required when group_by is 'tag'."
+          },
+          "timeframe": {
+            "type": "string",
+            "enum": ["month_to_date", "last_month", "last_7_days", "last_30_days"],
+            "description": "Time window. Defaults to month_to_date."
+          },
+          "top_n": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 50,
+            "description": "How many of the largest groups to itemise. Defaults to 10."
+          }
+        },
+        "required": ["scope"],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "costpulse_list_subscriptions",
+      "description": "List the Azure subscriptions the signed-in user can see (with their own permissions). Use this when the user has not said which subscription they mean.",
+      "parameters": {
+        "type": "object",
+        "properties": {},
+        "additionalProperties": false
+      }
+    }
+  ]
+}

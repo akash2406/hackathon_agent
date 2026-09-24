@@ -1,0 +1,35 @@
+# Verifies the self-hosted agent has the tools a job needs, and prints their
+# versions into the log. Self-hosted agents do not get the hosted-image tool
+# cache, so nothing is downloaded here: missing tools fail fast with a clear message.
+
+parameters:
+  - name: tools
+    type: object   # any of: python, node, docker, helm, kubectl
+
+steps:
+  - bash: |
+      failed=0
+      need() {
+        if ! command -v "$1" > /dev/null 2>&1; then
+          echo "##vso[task.logissue type=error]Self-hosted agent '$AGENT_NAME' is missing '$1' ($2)"
+          failed=1
+        else
+          echo "$1: $("$1" $3 2>&1 | head -n 1)"
+        fi
+      }
+      for tool in $REQUIRED_TOOLS; do
+        case "$tool" in
+          python)  need "$PYTHON_EXE" "Python 3.12 is required for the backend tests" "--version" ;;
+          node)    need node "Node.js 22 is required for the frontend build" "--version"
+                   need npm "npm is required for the frontend build" "--version" ;;
+          docker)  need docker "Docker is required to build and push images" "--version" ;;
+          helm)    need helm "Helm 3 is required for lint and deploy" "version --short" ;;
+          kubectl) need kubectl "kubectl is required by HelmDeploy" "version --client" ;;
+          *)       echo "##vso[task.logissue type=error]Unknown prerequisite '$tool'"; failed=1 ;;
+        esac
+      done
+      exit $failed
+    displayName: Check self-hosted agent prerequisites
+    env:
+      REQUIRED_TOOLS: ${{ join(' ', parameters.tools) }}
+      PYTHON_EXE: $(pythonExecutable)

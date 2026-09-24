@@ -1,0 +1,9 @@
+apiVersion: v2
+name: crip
+description: >-
+  Cloud Resource Intelligence Platform (CRIP) - Flow 2 tenant application.
+  Deploys the backend service and the chat frontend into a pre-allocated DaaS
+  AKS namespace. Provisions no Azure infrastructure.
+type: application
+version: 0.1.0
+appVersion: "0.1.0"

@@ -1,0 +1,11 @@
+**/.venv
+**/node_modules
+**/dist
+**/__pycache__
+**/.pytest_cache
+.git
+.secrets
+tests
+docs
+infra
+.azuredevops

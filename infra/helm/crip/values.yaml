@@ -1,0 +1,90 @@
+# -----------------------------------------------------------------------------
+# Landing-zone allocations (docs/landing-zone-requests.md).
+#
+# Every value in this block is REQUIRED and has no default. They are supplied
+# per environment by the pipeline (.azuredevops/vars/<env>.yml). If any
+# is missing, `helm template/install` fails with a message naming the
+# allocation. The chart never substitutes a default or provisions around a gap.
+# -----------------------------------------------------------------------------
+allocations:
+  # #1 AKS namespace. The release must be installed into exactly this namespace.
+  namespace: ""
+  # #2 PostgreSQL schema on the existing shared Flexible Server.
+  postgres:
+    schema: ""
+  # #3 ACR repository path, e.g. loginServer "contosoacr.azurecr.io", repositoryPath "tenants/crip".
+  acr:
+    loginServer: ""
+    repositoryPath: ""
+  # #4 User-assigned managed identity (client ID) federated to this namespace's service account.
+  workloadIdentity:
+    clientId: ""
+  # #5 Key Vault scope + the names of the secrets this build reads.
+  keyVault:
+    name: ""
+    tenantId: ""
+    postgresConnectionStringSecret: ""
+    # #8 Application Insights connection string, stored in the Key Vault above.
+    appInsightsConnectionStringSecret: ""
+  # #6 Entra app registrations.
+  entra:
+    tenantId: ""
+    apiClientId: ""            # backend API app registration (OBO-enabled)
+    apiAudience: ""            # optional; defaults to api://<apiClientId>
+    spaClientId: ""            # frontend SPA app registration
+  # #7 Azure AI Foundry project + model deployment.
+  foundry:
+    projectEndpoint: ""        # https://<resource>.services.ai.azure.com/api/projects/<project>
+    modelDeployment: ""        # e.g. gpt-4o
+
+# Image tag, set by the pipeline to the build id. Required.
+image:
+  tag: ""
+  pullPolicy: IfNotPresent
+
+serviceAccount:
+  # Must match the subject of the federated credential(s) in allocations #4 and #6:
+  # system:serviceaccount:<namespace>:<name>
+  name: crip
+
+backend:
+  replicas: 2
+  port: 8000
+  logLevel: INFO
+  # How the OBO exchange authenticates the backend app registration.
+  # "federated" = the app registration trusts this service account's projected
+  # token (no secret exists). Do not change for AKS deployments.
+  oboCredentialMode: federated
+  resources:
+    requests: { cpu: 100m, memory: 256Mi }
+    limits: { cpu: 500m, memory: 512Mi }
+
+frontend:
+  replicas: 2
+  port: 8080
+  resources:
+    requests: { cpu: 25m, memory: 32Mi }
+    limits: { cpu: 200m, memory: 128Mi }
+
+registerAgents:
+  # Helm post-install/post-upgrade hook that runs foundry/register_agents.py
+  # under the release's Workload Identity.
+  enabled: true
+  resources:
+    requests: { cpu: 50m, memory: 128Mi }
+    limits: { cpu: 250m, memory: 256Mi }
+
+ingress:
+  enabled: false
+  className: ""
+  host: ""
+  tlsSecretName: ""
+  annotations: {}
+
+networkPolicy:
+  # Namespace of the landing zone's ingress controller (allowed to reach the frontend).
+  ingressControllerNamespace: ""
+  # Egress CIDR for HTTPS and PostgreSQL. FQDN filtering is enforced upstream by
+  # the landing-zone firewall (NetworkPolicy cannot express FQDNs); narrow this
+  # to the firewall/private-endpoint ranges if the landing zone publishes them.
+  egressCidr: 0.0.0.0/0

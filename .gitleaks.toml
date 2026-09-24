@@ -1,0 +1,13 @@
+# gitleaks configuration: default rules, plus allowlisted test-only fixtures.
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Test fixtures and placeholder identifiers that are not secrets"
+paths = [
+  '''frontend/package-lock\.json''',
+]
+regexes = [
+  # Fixed non-secret HMAC key used only to mint fake JWTs in unit tests.
+  '''unit-test-only-signing-key-not-a-secret-000''',
+]

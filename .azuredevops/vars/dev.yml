@@ -1,0 +1,54 @@
+# Environment: dev
+#
+# Fill every "<...>" placeholder from the landing-zone allocations
+# (docs/landing-zone-requests.md). The pipeline's first step fails the run,
+# naming each variable, if any placeholder is left. NON-SECRET values only:
+# this file is committed to git.
+
+variables:
+  environmentName: dev
+
+  # Self-hosted Azure DevOps agent pool (Linux agents with Docker, Helm, kubectl,
+  # Python 3.12, Node 22; must reach ACR, the AKS API server and Azure endpoints).
+  agentPoolName: "<self-hosted-agent-pool-name>"
+
+  # Service connections (names as created in Project settings -> Service connections)
+  acrServiceConnection: "<docker-registry-service-connection-name>"        # push rights on #3
+  aksServiceConnection: "<kubernetes-service-connection-name>"             # scoped to namespace #1
+
+  # --- Landing-zone allocations -------------------------------------------------
+  # #1 AKS namespace
+  aksNamespace: "<aks-namespace>"
+  # #2 PostgreSQL schema on the shared Flexible Server
+  postgresSchema: "<postgres-schema>"
+  # #3 ACR
+  acrLoginServer: "<registry>.azurecr.io"
+  acrRepositoryPath: "<tenants/crip>"
+  # #4 User-assigned managed identity (client ID) federated to the "crip" service account
+  workloadIdentityClientId: "<managed-identity-client-id>"
+  # #5 Key Vault + secret NAMES (never values)
+  keyVaultName: "<key-vault-name>"
+  keyVaultTenantId: "<tenant-id>"
+  postgresSecretName: "<postgres-connection-string-secret-name>"
+  # #8 App Insights connection string secret NAME (stored in the Key Vault above)
+  appInsightsSecretName: "<appinsights-connection-string-secret-name>"
+  # #6 Entra app registrations
+  entraTenantId: "<tenant-id>"
+  apiClientId: "<backend-api-app-registration-client-id>"
+  spaClientId: "<frontend-spa-app-registration-client-id>"
+  # #7 Azure AI Foundry
+  foundryProjectEndpoint: "https://<resource>.services.ai.azure.com/api/projects/<project>"
+  foundryModelDeployment: "<model-deployment-name>"
+
+  # Ingress on the landing zone's ingress controller
+  ingressEnabled: "true"
+  ingressHost: "<crip-dev.example.com>"
+  ingressClassName: "<ingress-class>"
+  ingressControllerNamespace: "<ingress-controller-namespace>"
+  ingressTlsSecretName: ""          # optional: TLS secret in the namespace
+  # Scheme the self-hosted agent uses to reach the ingress for the post-deploy smoke test
+  smokeTestScheme: https
+
+  # Replica counts (dev can run lean)
+  backendReplicas: "1"
+  frontendReplicas: "1"

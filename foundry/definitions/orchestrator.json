@@ -1,0 +1,7 @@
+{
+  "role": "orchestrator",
+  "key": "orchestrator",
+  "name": "crip-orchestrator",
+  "description": "CRIP Orchestrator: routes each question to domain agents via tool calls and composes the final answer.",
+  "instructions_file": "orchestrator.md"
+}

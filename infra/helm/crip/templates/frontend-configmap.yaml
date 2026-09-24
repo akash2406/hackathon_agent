@@ -1,0 +1,36 @@
+{{- include "crip.validateAllocations" . -}}
+{{- $a := .Values.allocations -}}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "crip.fullname" . }}-frontend
+  labels:
+    {{- include "crip.labels" . | nindent 4 }}
+    app.kubernetes.io/component: frontend
+data:
+  # Public identifiers only (tenant ID, SPA client ID, API scope) - not secrets.
+  config.js: |
+    window.CRIP_CONFIG = {
+      tenantId: {{ $a.entra.tenantId | quote }},
+      spaClientId: {{ $a.entra.spaClientId | quote }},
+      apiScope: {{ printf "%s/access_as_user" (default (printf "api://%s" $a.entra.apiClientId) $a.entra.apiAudience) | quote }},
+      apiBaseUrl: ""
+    };
+  default.conf: |
+    server {
+      listen {{ .Values.frontend.port }};
+      server_name _;
+      root /usr/share/nginx/html;
+      add_header X-Content-Type-Options nosniff always;
+      add_header Referrer-Policy no-referrer always;
+      add_header X-Frame-Options DENY always;
+      location /api/ {
+        proxy_pass http://{{ include "crip.fullname" . }}-backend:{{ .Values.backend.port }};
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_read_timeout 180s;
+      }
+      location = /config.js { add_header Cache-Control "no-store"; }
+      location / { try_files $uri /index.html; }
+    }

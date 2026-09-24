@@ -1,0 +1,28 @@
+# Fails the run, naming every variable that is missing or still a "<...>"
+# placeholder in .azuredevops/vars/*.yml. Same principle as the Helm chart:
+# a missing allocation is a stop, never a silent default.
+
+parameters:
+  - name: names
+    type: object
+  - name: varsFile
+    type: string
+
+steps:
+  - bash: |
+      failed=0
+      for var in $(compgen -e | grep '^CHECK_' | sort); do
+        name="${var#CHECK_}"
+        value="${!var}"
+        # Azure DevOps leaves an undefined variable as the literal text "$(name)".
+        if [ -z "$value" ] || [[ "$value" == *"<"*">"* ]] || [[ "$value" == '$('* ]]; then
+          echo "##vso[task.logissue type=error]Pipeline variable '$name' is not set in ${{ parameters.varsFile }}"
+          failed=1
+        fi
+      done
+      [ "$failed" -eq 0 ] && echo "All required pipeline variables are set."
+      exit $failed
+    displayName: Validate pipeline variables (${{ parameters.varsFile }})
+    env:
+      ${{ each name in parameters.names }}:
+        CHECK_${{ name }}: $(${{ name }})

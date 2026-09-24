@@ -1,0 +1,31 @@
+# Placeholder allocations used ONLY for `helm lint` / `helm template` in CI.
+# These are syntactically valid fake identifiers, not real resources or secrets.
+allocations:
+  namespace: crip-lint
+  postgres:
+    schema: crip
+  acr:
+    loginServer: example.azurecr.io
+    repositoryPath: tenants/crip
+  workloadIdentity:
+    clientId: 00000000-0000-0000-0000-000000000001
+  keyVault:
+    name: kv-example
+    tenantId: 00000000-0000-0000-0000-000000000000
+    postgresConnectionStringSecret: postgres-connection-string
+    appInsightsConnectionStringSecret: appinsights-connection-string
+  entra:
+    tenantId: 00000000-0000-0000-0000-000000000000
+    apiClientId: 00000000-0000-0000-0000-000000000002
+    spaClientId: 00000000-0000-0000-0000-000000000003
+  foundry:
+    projectEndpoint: https://example.services.ai.azure.com/api/projects/crip
+    modelDeployment: gpt-4o
+image:
+  tag: lint
+ingress:
+  enabled: true
+  className: nginx
+  host: crip.example.com
+networkPolicy:
+  ingressControllerNamespace: ingress-nginx

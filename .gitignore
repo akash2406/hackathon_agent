@@ -1,0 +1,20 @@
+# Python
+.venv/
+__pycache__/
+*.egg-info/
+.pytest_cache/
+test-results*.xml
+
+# Node
+node_modules/
+frontend/dist/
+
+# Local-only secrets directory (mirrors the Key Vault CSI mount) and local config. Never commit.
+.secrets/
+.env
+
+# Editors / OS
+.vscode/
+.idea/
+.DS_Store
+*.tsbuildinfo

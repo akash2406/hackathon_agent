@@ -1,0 +1,74 @@
+:root {
+  --bg: #f6f7f9;
+  --panel: #ffffff;
+  --text: #1c2330;
+  --muted: #5d6778;
+  --border: #d9dee7;
+  --accent: #2458c6;
+  --ok: #1f7a3d;
+  --partial: #9a6700;
+  --nodata: #5d6778;
+  --error: #b42318;
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  color: var(--text);
+  background: var(--bg);
+}
+
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); }
+code, pre { font-family: ui-monospace, "Cascadia Code", Consolas, monospace; font-size: 0.85em; }
+
+.app { display: flex; flex-direction: column; height: 100vh; }
+.topbar { display: flex; justify-content: space-between; align-items: center; padding: 10px 16px; background: var(--panel); border-bottom: 1px solid var(--border); gap: 12px; }
+.muted { color: var(--muted); }
+.fatal { padding: 16px; color: var(--error); white-space: pre-wrap; }
+
+button { background: var(--accent); color: #fff; border: 0; border-radius: 6px; padding: 8px 14px; cursor: pointer; font: inherit; }
+button:disabled { opacity: 0.5; cursor: default; }
+button.link { background: none; color: var(--accent); padding: 4px 6px; }
+button.chip { background: var(--panel); color: var(--accent); border: 1px solid var(--border); }
+
+.signin { max-width: 560px; margin: 80px auto; text-align: center; padding: 0 16px; }
+
+.chat { flex: 1; display: flex; flex-direction: column; min-height: 0; max-width: 980px; width: 100%; margin: 0 auto; }
+.thread { flex: 1; overflow-y: auto; padding: 16px; display: flex; flex-direction: column; gap: 12px; }
+.empty { color: var(--muted); text-align: center; margin-top: 40px; }
+.examples { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; margin-top: 12px; }
+
+.bubble { border-radius: 10px; padding: 12px 14px; max-width: 100%; overflow-wrap: anywhere; }
+.bubble.user { align-self: flex-end; background: var(--accent); color: #fff; max-width: 80%; white-space: pre-wrap; }
+.bubble.assistant { align-self: stretch; background: var(--panel); border: 1px solid var(--border); }
+.bubble.pending { color: var(--muted); font-style: italic; }
+.bubble.error { background: #fef3f2; border: 1px solid #fda29b; color: var(--error); }
+.meta { font-size: 0.8em; margin-top: 6px; color: var(--muted); }
+
+.answer-head { display: flex; gap: 8px; margin-bottom: 8px; flex-wrap: wrap; }
+.answer { white-space: pre-wrap; line-height: 1.5; }
+.caveats { color: var(--muted); font-size: 0.9em; margin: 8px 0 0; padding-left: 18px; }
+
+.badge { font-size: 0.75em; font-weight: 600; padding: 2px 8px; border-radius: 999px; border: 1px solid currentColor; }
+.badge.status-ok { color: var(--ok); }
+.badge.status-partial { color: var(--partial); }
+.badge.status-no_data { color: var(--nodata); }
+.badge.status-error { color: var(--error); }
+.badge.ungrounded { color: var(--partial); }
+
+.citation { margin-top: 12px; border-left: 3px solid var(--border); padding: 8px 12px; background: #fafbfc; border-radius: 0 6px 6px 0; font-size: 0.9em; }
+.citation.status-ok { border-left-color: var(--ok); }
+.citation.status-partial { border-left-color: var(--partial); }
+.citation.status-error { border-left-color: var(--error); }
+.citation-head { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 6px; }
+.citation dl { margin: 0; display: grid; grid-template-columns: max-content 1fr; gap: 4px 12px; }
+.citation dt { color: var(--muted); font-weight: 600; }
+.citation dd { margin: 0; min-width: 0; }
+.citation .source { display: contents; }
+.citation ul { margin: 0; padding-left: 18px; }
+.query { margin: 0; padding: 8px; background: #f0f2f5; border-radius: 4px; white-space: pre-wrap; word-break: break-all; max-height: 180px; overflow: auto; }
+
+.composer { display: flex; gap: 8px; padding: 12px 16px; border-top: 1px solid var(--border); background: var(--panel); align-items: flex-end; flex-wrap: wrap; }
+.composer textarea { flex: 1; min-width: 200px; resize: vertical; padding: 8px; border: 1px solid var(--border); border-radius: 6px; font: inherit; }
+
+@media (max-width: 600px) {
+  .citation dl { grid-template-columns: 1fr; }
+  .bubble.user { max-width: 95%; }
+}
