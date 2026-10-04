@@ -213,6 +213,7 @@ class ErrorCode(StrEnum):
     FORBIDDEN = "forbidden"
     INVALID_REQUEST = "invalid_request"
     SESSION_NOT_FOUND = "session_not_found"
+    NOT_FOUND = "not_found"
     UNKNOWN_TOOL = "unknown_tool"
     ORCHESTRATOR_UNAVAILABLE = "orchestrator_unavailable"
     UPSTREAM_TIMEOUT = "upstream_timeout"

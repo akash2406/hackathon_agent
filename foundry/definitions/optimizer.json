@@ -1,0 +1,63 @@
+{
+  "role": "domain",
+  "key": "optimizer",
+  "name": "crip-optimizer",
+  "description": "CRIP domain agent: where to save money. Azure Advisor cost recommendations and idle resources priced with real month-to-date cost.",
+  "summary": "Azure Advisor savings and idle resources you are still paying for, priced with real cost.",
+  "instructions_file": "optimizer.md",
+  "delegation_tool": {
+    "name": "ask_optimizer",
+    "description": "Ask the Optimizer agent how to SAVE money on Azure: Azure Advisor cost recommendations with their estimated annual savings (right-sizing, reservations, shutting down underused resources), and idle or orphaned resources (unattached disks, unused public IPs, orphaned network interfaces, empty App Service plans, VMs stopped but not deallocated) together with what they actually cost this month. Answers come from Azure Advisor, Azure Resource Graph and Cost Management."
+  },
+  "examples": [
+    "How can I reduce my Azure costs?",
+    "Do I have idle resources I'm still paying for?",
+    "What does Azure Advisor recommend and how much would I save?"
+  ],
+  "tools": [
+    {
+      "name": "optimizer_advisor_recommendations",
+      "description": "Azure Advisor cost recommendations for a subscription (optionally filtered to one resource group), with Advisor's own monthly/annual savings estimates, grouped by recommendation type and ranked by savings.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "scope": {
+            "type": "string",
+            "description": "Subscription id (GUID), /subscriptions/<id>, or /subscriptions/<id>/resourceGroups/<name>."
+          },
+          "top_n": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 50,
+            "description": "How many recommendations to itemise. Defaults to 10."
+          }
+        },
+        "required": [
+          "scope"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "optimizer_find_idle_resources",
+      "description": "Find idle/orphaned resources with Azure Resource Graph (unattached managed disks, unassociated public IPs, orphaned NICs, empty App Service plans, VMs stopped but not deallocated) and price each with its actual month-to-date cost from Cost Management.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "scope": {
+            "type": "string",
+            "description": "Subscription id (GUID), /subscriptions/<id>, or /subscriptions/<id>/resourceGroups/<name>."
+          },
+          "include_cost": {
+            "type": "boolean",
+            "description": "Also look up each resource's month-to-date cost. Defaults to true."
+          }
+        },
+        "required": [
+          "scope"
+        ],
+        "additionalProperties": false
+      }
+    }
+  ]
+}

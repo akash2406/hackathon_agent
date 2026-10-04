@@ -9,9 +9,12 @@ RBAC decides what they can see - there is no application-level scope checking
 standing in for it, and no platform identity with standing read access to
 customer subscriptions.
 
-This module is the only place an ARM token for cost data is produced.
-``DefaultAzureCredential`` is deliberately not used here; it is reserved for the
-backend's own operations (Foundry). ``DelegatedToken.assert_belongs_to`` is the
+This module is the only place an ARM token for user data is produced (Cost
+Management, Advisor, Resource Graph all use it). ``DefaultAzureCredential`` is
+deliberately not used for those calls; it is reserved for the backend's own
+operations (Foundry). The app's managed identity appears here only as the
+*client credential* of the app registration (proving which app is asking), never
+as the identity that reads Azure data. ``DelegatedToken.assert_belongs_to`` is the
 runtime proof that every Cost Management call carries the signed-in user's
 delegated token: it checks the exchanged token's ``oid`` equals the user's and
 that it is a delegated (``scp``) token, not an app-only one.
@@ -37,6 +40,8 @@ ARM_SCOPE = "https://management.azure.com/.default"
 _ARM_AUDIENCES = {"https://management.azure.com/", "https://management.azure.com", "https://management.core.windows.net/"}
 # Refresh this long before expiry so a token never expires mid Cost Management call.
 _EXPIRY_SKEW_SECONDS = 300
+# Audience Entra expects for a managed-identity token used as a federated client assertion.
+_FEDERATION_SCOPE = "api://AzureADTokenExchange/.default"
 
 
 class OboExchangeError(RuntimeError):
@@ -83,8 +88,9 @@ class OnBehalfOfTokenProvider:
         self._clock = clock
         # Built lazily on first exchange: MSAL fetches authority metadata from
         # login.microsoftonline.com when constructed, and a transient Entra
-        # blip at pod start should fail one request, not crash-loop the pod.
+        # blip at container start should fail one request, not crash the app.
         self._app: Any | None = msal_app
+        self._mi_credential: Any | None = None
         # Keyed by (session_id, user oid). Why per session and not per request:
         # a single question can trigger several tool calls (list subscriptions,
         # then a cost query, then a follow-up), and a conversation spans many
@@ -96,23 +102,30 @@ class OnBehalfOfTokenProvider:
         self._locks: dict[tuple[str, str], asyncio.Lock] = {}
 
     def _client_credential(self) -> str | dict[str, Callable[[], str]]:
-        if self._settings.obo_credential_mode is OboCredentialMode.FEDERATED:
-            # Callable, not a string: kubelet rotates the projected token file, so
-            # MSAL must re-read it on each exchange.
-            return {"client_assertion": self._read_federated_assertion}
-        if not self._settings.obo_client_secret_name:
-            raise ValueError("CRIP_OBO_CLIENT_SECRET_NAME is required when CRIP_OBO_CREDENTIAL_MODE=secret_file")
+        if self._settings.obo_credential_mode is OboCredentialMode.MANAGED_IDENTITY:
+            # Callable, not a string: MSAL asks for a fresh assertion per exchange
+            # and the managed-identity token is short-lived.
+            return {"client_assertion": self._managed_identity_assertion}
         return self._secrets.get(self._settings.obo_client_secret_name)
 
-    def _read_federated_assertion(self) -> str:
-        path = self._settings.federated_token_file
-        if path is None or not path.is_file():
+    def _managed_identity_assertion(self) -> str:
+        """A token for the web app's user-assigned managed identity, used as the app registration's credential.
+
+        The API app registration has a federated identity credential that trusts
+        this managed identity, so the OBO exchange needs no client secret.
+        """
+        client_id = self._settings.managed_identity_client_id
+        if not client_id:
             raise OboExchangeError(
-                "federated_token_missing",
-                "AZURE_FEDERATED_TOKEN_FILE is not available. Workload Identity must be enabled on the pod and the "
-                "backend app registration must trust this service account (landing-zone allocations #4 and #6).",
+                "managed_identity_missing",
+                "CRIP_OBO_CREDENTIAL_MODE=managed_identity needs AZURE_CLIENT_ID (the web app's user-assigned "
+                "managed identity). See docs/azure-setup.md.",
             )
-        return path.read_text(encoding="utf-8").strip()
+        if self._mi_credential is None:
+            from azure.identity import ManagedIdentityCredential
+
+            self._mi_credential = ManagedIdentityCredential(client_id=client_id)
+        return self._mi_credential.get_token(_FEDERATION_SCOPE).token
 
     async def get_token(self, *, session_id: UUID | None, user: AuthenticatedUser) -> DelegatedToken:
         if session_id is None:

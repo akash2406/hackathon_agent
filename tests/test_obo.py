@@ -1,10 +1,12 @@
 """OBO exchange: per-session caching and the delegated-token guard."""
 
 import uuid
+from types import SimpleNamespace
 
 import pytest
 
 from crip_backend.auth.obo import ARM_SCOPE, NotDelegatedTokenError, OboExchangeError, OnBehalfOfTokenProvider
+from crip_backend.config import OboCredentialMode
 from crip_backend.secrets import SecretStore
 
 from .conftest import OTHER_OID, USER_OID, make_arm_token
@@ -66,14 +68,35 @@ async def test_non_delegated_or_foreign_token_is_rejected(settings, user, bad):
         await provider(settings, msal_app).get_token(session_id=uuid.uuid4(), user=user)
 
 
-def test_federated_assertion_is_read_from_projected_token_file(settings, tmp_path):
-    token_file = tmp_path / "azure-identity-token"
-    token_file.write_text("projected-sa-token\n")
-    settings.federated_token_file = token_file
-    assert provider(settings, FakeMsal())._read_federated_assertion() == "projected-sa-token"
+def test_managed_identity_assertion_uses_the_web_apps_identity(settings, monkeypatch):
+    requested = {}
+
+    class FakeManagedIdentityCredential:
+        def __init__(self, client_id):
+            requested["client_id"] = client_id
+
+        def get_token(self, scope):
+            requested["scope"] = scope
+            return SimpleNamespace(token="mi-assertion")
+
+    import azure.identity
+
+    monkeypatch.setattr(azure.identity, "ManagedIdentityCredential", FakeManagedIdentityCredential)
+    settings.obo_credential_mode = OboCredentialMode.MANAGED_IDENTITY
+    settings.managed_identity_client_id = "mi-client-id"
+    p = provider(settings, FakeMsal())
+    credential = p._client_credential()
+    assert credential["client_assertion"]() == "mi-assertion"
+    assert requested == {"client_id": "mi-client-id", "scope": "api://AzureADTokenExchange/.default"}
 
 
-def test_missing_federated_token_names_the_allocation(settings):
-    settings.federated_token_file = None
-    with pytest.raises(OboExchangeError, match="allocations #4 and #6"):
-        provider(settings, FakeMsal())._read_federated_assertion()
+def test_managed_identity_mode_without_identity_explains_setup(settings):
+    settings.obo_credential_mode = OboCredentialMode.MANAGED_IDENTITY
+    settings.managed_identity_client_id = None
+    with pytest.raises(OboExchangeError, match="AZURE_CLIENT_ID"):
+        provider(settings, FakeMsal())._managed_identity_assertion()
+
+
+def test_client_secret_mode_reads_secret_by_name(settings, monkeypatch):
+    monkeypatch.setenv("CRIP_SECRET_OBO_CLIENT_SECRET", "s3cr3t-from-key-vault-reference")
+    assert provider(settings, FakeMsal())._client_credential() == "s3cr3t-from-key-vault-reference"

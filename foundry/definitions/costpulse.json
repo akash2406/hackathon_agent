@@ -2,26 +2,37 @@
   "role": "domain",
   "key": "costpulse",
   "name": "crip-costpulse",
-  "description": "CRIP domain agent: grounded Azure cost answers from the Cost Management Query API.",
+  "description": "CRIP domain agent: grounded Azure spend, daily trends with anomaly detection, and month-end forecast from Azure Cost Management.",
+  "summary": "Spend by any dimension, daily trends with spike detection, and Azure's month-end forecast.",
   "instructions_file": "costpulse.md",
   "delegation_tool": {
     "name": "ask_costpulse",
-    "description": "Ask the CostPulse agent about Azure spend: how much was spent, what costs the most, cost broken down by resource group, resource type or tag, for month-to-date, last month, or the last 7/30 days, and which subscriptions the user can see. Returns an answer grounded in live Azure Cost Management data, with the exact query and data timestamp."
+    "description": "Ask the CostPulse agent about Azure SPEND: how much was spent, what costs the most (by resource group, resource type, service or tag), how daily cost is trending, which days had unusual spikes and which services drove them, what the month-end total is forecast to be, and which subscriptions the user can see. Answers come from live Azure Cost Management data with the exact query and data timestamp."
   },
+  "examples": [
+    "What is my month-to-date spend by resource group?",
+    "Were there any cost spikes in the last 30 days? What caused them?",
+    "What will my bill be at the end of this month?"
+  ],
   "tools": [
     {
       "name": "costpulse_query_costs",
-      "description": "Query Azure Cost Management for actual cost at a scope, grouped by one dimension. Runs with the signed-in user's own Azure permissions. Returns a JSON contract with status (ok/partial/no_data/error), answer, data, query_used, data_timestamp, sources and caveats.",
+      "description": "Actual cost at a scope for a time window, grouped by one dimension. Runs with the signed-in user's own Azure permissions. Returns a JSON contract with status (ok/partial/no_data/error), answer, data, query_used, data_timestamp, sources and caveats.",
       "parameters": {
         "type": "object",
         "properties": {
           "scope": {
             "type": "string",
-            "description": "Azure scope to query: a subscription id (GUID), /subscriptions/<id>, /subscriptions/<id>/resourceGroups/<name>, or /providers/Microsoft.Management/managementGroups/<id>. If the user has not identified one, call costpulse_list_subscriptions first."
+            "description": "Azure scope: a subscription id (GUID), /subscriptions/<id>, /subscriptions/<id>/resourceGroups/<name>, or /providers/Microsoft.Management/managementGroups/<id>. If the user has not identified one, call costpulse_list_subscriptions first."
           },
           "group_by": {
             "type": "string",
-            "enum": ["resource_group", "resource_type", "tag"],
+            "enum": [
+              "resource_group",
+              "resource_type",
+              "service",
+              "tag"
+            ],
             "description": "Dimension to group cost by. Defaults to resource_group."
           },
           "tag_key": {
@@ -30,7 +41,12 @@
           },
           "timeframe": {
             "type": "string",
-            "enum": ["month_to_date", "last_month", "last_7_days", "last_30_days"],
+            "enum": [
+              "month_to_date",
+              "last_month",
+              "last_7_days",
+              "last_30_days"
+            ],
             "description": "Time window. Defaults to month_to_date."
           },
           "top_n": {
@@ -40,7 +56,49 @@
             "description": "How many of the largest groups to itemise. Defaults to 10."
           }
         },
-        "required": ["scope"],
+        "required": [
+          "scope"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "costpulse_cost_trend",
+      "description": "Daily cost series for the last N days, with the trend direction, anomalous spike days (robust median/MAD rule) and the services that drove each spike. Use for 'why did my costs go up', 'any spikes', 'is spend rising'.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "scope": {
+            "type": "string",
+            "description": "Subscription id, /subscriptions/<id>, /subscriptions/<id>/resourceGroups/<name>, or a management group scope."
+          },
+          "days": {
+            "type": "integer",
+            "minimum": 7,
+            "maximum": 90,
+            "description": "How many days back to analyse. Defaults to 30."
+          }
+        },
+        "required": [
+          "scope"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "costpulse_forecast_month_end",
+      "description": "Actual cost so far this month plus Azure Cost Management's own forecast for the remaining days, giving a projected month-end total. Use for 'what will my bill be', 'are we on track'.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "scope": {
+            "type": "string",
+            "description": "Subscription id, /subscriptions/<id>, /subscriptions/<id>/resourceGroups/<name>, or a management group scope."
+          }
+        },
+        "required": [
+          "scope"
+        ],
         "additionalProperties": false
       }
     },

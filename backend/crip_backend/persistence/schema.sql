@@ -1,6 +1,6 @@
--- CRIP schema. Applied idempotently at backend startup inside the *allocated*
--- schema (search_path is set to it on every pooled connection). This file never
--- creates a database, server or schema: those are landing-zone allocations.
+-- CRIP schema for PostgreSQL (optional store; SQLite is the default, see
+-- schema_sqlite.sql). Applied idempotently at startup inside CRIP_DB_SCHEMA
+-- (search_path is set to it on every pooled connection).
 
 CREATE TABLE IF NOT EXISTS sessions (
     id                 UUID PRIMARY KEY,

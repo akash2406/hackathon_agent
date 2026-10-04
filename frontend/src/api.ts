@@ -1,9 +1,14 @@
 /**
- * Calls the backend chat API with the signed-in user's access token.
+ * The UI's only door to the backend.
+ *
+ * ``Api`` has two implementations:
+ *  - ``liveApi``: calls the backend with the signed-in user's token (MSAL).
+ *    Every number it returns was computed by the backend from a real Azure call.
+ *  - ``demoApi``: returns clearly labelled SAMPLE data from the browser bundle,
+ *    with no sign-in, for UI previews only (config.demoMode). It never talks to Azure.
  *
  * Every non-2xx response is parsed as the backend's ErrorEnvelope and surfaced
- * as an ApiFailure, so the UI can show the honest error and correlation id
- * instead of guessing.
+ * as an ApiFailure, so the UI can show the honest error and correlation id.
  */
 import {
   InteractionRequiredAuthError,
@@ -11,7 +16,7 @@ import {
   type IPublicClientApplication,
 } from "@azure/msal-browser";
 import { apiTokenRequest, config } from "./config";
-import type { ChatResponse, ErrorEnvelope } from "./types";
+import type { AgentResponse, Capabilities, ChatResponse, ErrorEnvelope } from "./types";
 
 export class ApiFailure extends Error {
   constructor(
@@ -24,44 +29,76 @@ export class ApiFailure extends Error {
   }
 }
 
+export interface Api {
+  readonly demo: boolean;
+  callTool(name: string, args: Record<string, unknown>): Promise<AgentResponse>;
+  chat(message: string, sessionId: string | null): Promise<ChatResponse>;
+}
+
 async function accessToken(msal: IPublicClientApplication, account: AccountInfo): Promise<string> {
   try {
-    const result = await msal.acquireTokenSilent({ ...apiTokenRequest, account });
-    return result.accessToken;
+    return (await msal.acquireTokenSilent({ ...apiTokenRequest, account })).accessToken;
   } catch (err) {
     if (err instanceof InteractionRequiredAuthError) {
-      const result = await msal.acquireTokenPopup({ ...apiTokenRequest, account });
-      return result.accessToken;
+      return (await msal.acquireTokenPopup({ ...apiTokenRequest, account })).accessToken;
     }
     throw err;
   }
 }
 
-export async function postChat(
-  msal: IPublicClientApplication,
-  account: AccountInfo,
-  message: string,
-  sessionId: string | null,
-): Promise<ChatResponse> {
-  const token = await accessToken(msal, account);
-  const response = await fetch(`${config.apiBaseUrl}/api/chat`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-    body: JSON.stringify({ message, session_id: sessionId }),
-  });
-  if (!response.ok) {
-    let envelope: ErrorEnvelope | null = null;
-    try {
-      envelope = (await response.json()) as ErrorEnvelope;
-    } catch {
-      /* non-JSON error (e.g. proxy) handled below */
-    }
-    throw new ApiFailure(
-      envelope?.error.message ?? `Request failed with HTTP ${response.status}`,
-      envelope?.error.code ?? `http_${response.status}`,
-      envelope?.error.correlation_id ?? response.headers.get("x-correlation-id"),
-      envelope?.error.retryable ?? response.status >= 500,
-    );
+async function failureFrom(response: Response): Promise<ApiFailure> {
+  let envelope: ErrorEnvelope | null = null;
+  try {
+    envelope = (await response.json()) as ErrorEnvelope;
+  } catch {
+    /* non-JSON error (e.g. a proxy) handled below */
   }
-  return (await response.json()) as ChatResponse;
+  return new ApiFailure(
+    envelope?.error?.message ?? `Request failed with HTTP ${response.status}`,
+    envelope?.error?.code ?? `http_${response.status}`,
+    envelope?.error?.correlation_id ?? response.headers.get("x-correlation-id"),
+    envelope?.error?.retryable ?? response.status >= 500,
+  );
+}
+
+export function liveApi(msal: IPublicClientApplication, account: AccountInfo): Api {
+  async function post<T>(path: string, body: unknown): Promise<T> {
+    const token = await accessToken(msal, account);
+    const response = await fetch(`${config.apiBaseUrl}${path}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+      body: JSON.stringify(body),
+    });
+    if (!response.ok) throw await failureFrom(response);
+    return (await response.json()) as T;
+  }
+  return {
+    demo: false,
+    callTool: (name, args) => post<AgentResponse>(`/api/tools/${encodeURIComponent(name)}`, args),
+    chat: (message, sessionId) => post<ChatResponse>("/api/chat", { message, session_id: sessionId }),
+  };
+}
+
+export function demoApi(): Api {
+  // Lazy import keeps the sample data out of the main bundle for real users.
+  const load = () => import("./demo/sample");
+  const delay = (ms: number) => new Promise((r) => setTimeout(r, ms));
+  return {
+    demo: true,
+    callTool: async (name, args) => {
+      await delay(350 + Math.random() * 400);
+      return (await load()).sampleTool(name, args);
+    },
+    chat: async (message) => {
+      await delay(1600);
+      return (await load()).sampleChat(message);
+    },
+  };
+}
+
+/** Public (no token): which agents exist and their example questions. */
+export async function getCapabilities(): Promise<Capabilities> {
+  const response = await fetch(`${config.apiBaseUrl}/api/capabilities`);
+  if (!response.ok) return { agents: [] };
+  return (await response.json()) as Capabilities;
 }

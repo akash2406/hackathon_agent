@@ -24,7 +24,7 @@ from typing import Any
 from pydantic import BaseModel, ValidationError
 
 from ..contracts import AgentResponse, Confidence, ResponseStatus
-from . import costpulse
+from . import costpulse, inventory, optimizer
 from .context import ToolContext, ToolContribution
 
 log = logging.getLogger(__name__)
@@ -43,10 +43,16 @@ class ToolSpec:
 TOOLS: dict[str, ToolSpec] = {
     spec.name: spec
     for spec in (
+        # CostPulse: spend, trend, forecast
         ToolSpec(costpulse.QUERY_COSTS, costpulse.AGENT, costpulse.QueryCostsArgs, costpulse.query_costs),
+        ToolSpec(costpulse.COST_TREND, costpulse.AGENT, costpulse.CostTrendArgs, costpulse.cost_trend),
+        ToolSpec(costpulse.FORECAST, costpulse.AGENT, costpulse.ForecastArgs, costpulse.forecast_month_end),
         ToolSpec(costpulse.LIST_SUBSCRIPTIONS, costpulse.AGENT, costpulse.ListSubscriptionsArgs, costpulse.list_subscriptions),
-        # Next agent's tools go here, e.g.:
-        # ToolSpec(inventory.LIST_RESOURCES, inventory.AGENT, inventory.ListResourcesArgs, inventory.list_resources),
+        # Optimizer: savings
+        ToolSpec(optimizer.ADVISOR, optimizer.AGENT, optimizer.AdvisorArgs, optimizer.advisor_recommendations),
+        ToolSpec(optimizer.IDLE, optimizer.AGENT, optimizer.IdleResourcesArgs, optimizer.find_idle_resources),
+        # Inventory: what exists, tag coverage
+        ToolSpec(inventory.SUMMARY, inventory.AGENT, inventory.ResourceSummaryArgs, inventory.resource_summary),
     )
 }
 

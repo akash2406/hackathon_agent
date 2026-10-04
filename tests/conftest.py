@@ -26,7 +26,7 @@ import pytest
 
 from crip_backend.auth.entra import AuthenticatedUser
 from crip_backend.auth.obo import DelegatedToken
-from crip_backend.azure_clients.cost_management import CostManagementClient
+from crip_backend.azure_clients.arm import ArmClient
 from crip_backend.config import Settings
 from crip_backend.contracts import ResponseStatus
 from crip_backend.persistence.repository import MessageRecord, SessionRecord
@@ -59,6 +59,8 @@ def settings(tmp_path: Path) -> Settings:
         tenant_id=TENANT,
         api_client_id=API_CLIENT_ID,
         db_schema="crip",
+        sqlite_path=tmp_path / "crip.db",
+        static_dir=tmp_path / "no-ui",
         foundry_project_endpoint="https://example.services.ai.azure.com/api/projects/crip",
         secrets_dir=tmp_path,
         foundry_definitions_dir=REPO_ROOT / "foundry" / "definitions",
@@ -106,9 +108,9 @@ def fake_sleep() -> FakeSleep:
 
 
 @pytest.fixture
-async def cost_client(fake_sleep: FakeSleep):
+async def arm_client(fake_sleep: FakeSleep):
     async with httpx.AsyncClient() as http:
-        yield CostManagementClient(http, sleep=fake_sleep, clock=lambda: FIXED_NOW, max_retries=2)
+        yield ArmClient(http, sleep=fake_sleep, clock=lambda: FIXED_NOW, max_retries=2)
 
 
 @pytest.fixture
@@ -117,8 +119,8 @@ def token_source() -> FakeTokenSource:
 
 
 @pytest.fixture
-def tool_ctx(user: AuthenticatedUser, token_source: FakeTokenSource, cost_client: CostManagementClient) -> ToolContext:
-    return ToolContext(user=user, session_id=uuid.uuid4(), tokens=token_source, cost_client=cost_client)
+def tool_ctx(user: AuthenticatedUser, token_source: FakeTokenSource, arm_client: ArmClient) -> ToolContext:
+    return ToolContext(user=user, session_id=uuid.uuid4(), tokens=token_source, arm=arm_client)
 
 
 def cost_query_payload(rows: list[list[Any]], *, next_link: str | None = None) -> dict[str, Any]:

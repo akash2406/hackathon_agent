@@ -41,9 +41,12 @@ class FunctionToolDef:
 class DomainAgentDef:
     key: str  # short name used in contracts, e.g. "costpulse"
     name: str  # Foundry agent name, e.g. "crip-costpulse"
-    instructions_file: str
+    description: str
+    instructions: str  # contents of the definition's instructions .md
     delegation_tool: FunctionToolDef
     tools: tuple[FunctionToolDef, ...]
+    examples: tuple[str, ...] = ()  # sample questions, shown as suggestions in the UI
+    summary: str = ""  # one-line, user-facing description for the UI
 
     @property
     def tool_names(self) -> frozenset[str]:
@@ -54,7 +57,8 @@ class DomainAgentDef:
 class OrchestratorDef:
     key: str
     name: str
-    instructions_file: str
+    description: str
+    instructions: str
 
 
 @dataclass(frozen=True)
@@ -73,16 +77,21 @@ def load_definitions(directory: Path) -> AgentDefinitions:
         raw = json.loads(path.read_text(encoding="utf-8"))
         role = raw.get("role")
         if role == "orchestrator":
-            orchestrator = OrchestratorDef(key=raw["key"], name=raw["name"], instructions_file=raw["instructions_file"])
+            orchestrator = OrchestratorDef(
+                key=raw["key"], name=raw["name"], description=raw.get("description", ""), instructions=_instructions(directory, raw)
+            )
         elif role == "domain":
             delegation = raw["delegation_tool"]
             domains.append(
                 DomainAgentDef(
                     key=raw["key"],
                     name=raw["name"],
-                    instructions_file=raw["instructions_file"],
+                    description=raw.get("description", ""),
+                    instructions=_instructions(directory, raw),
                     delegation_tool=FunctionToolDef(delegation["name"], delegation["description"], DELEGATION_PARAMETERS),
                     tools=tuple(FunctionToolDef(t["name"], t["description"], t["parameters"]) for t in raw["tools"]),
+                    examples=tuple(raw.get("examples", [])),
+                    summary=raw.get("summary", ""),
                 )
             )
         else:
@@ -92,6 +101,10 @@ def load_definitions(directory: Path) -> AgentDefinitions:
     if not domains:
         raise ValueError(f"no domain agent definitions found in {directory}")
     return AgentDefinitions(orchestrator=orchestrator, domains=tuple(domains))
+
+
+def _instructions(directory: Path, raw: dict[str, Any]) -> str:
+    return (directory / raw["instructions_file"]).read_text(encoding="utf-8")
 
 
 def verify_tool_coverage(definitions: AgentDefinitions, handlers: dict[str, Any]) -> None:

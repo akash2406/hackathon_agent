@@ -1,67 +1,52 @@
 # Known simplifications: where to start if CRIP becomes a real project
 
-This build is a deliberately reduced slice of the target design, sized for a hackathon. The
-non-negotiables are **not** simplified: real grounding, on-behalf-of auth, no hardcoded secrets.
-Everything below is a conscious trade, listed with its starting point.
+Hackathon trade-offs, made consciously. The non-negotiables are **not** simplified: real grounding,
+on-behalf-of auth for every Azure data call, no hardcoded secrets.
 
 ## 1. No caching layer
 
-Every question triggers live Cost Management calls. That's fine for demo traffic, but Cost Management
-has tight per-tenant and per-scope query quotas (QPU), and the data only changes a few times a day.
-**Start here:** cache tool results keyed by `(user oid, scope, query body hash)` with a TTL of ~1 hour,
-in Redis (a new landing-zone allocation). Keep the original `data_timestamp` and `sources` on cached
-entries and add a caveat saying the result came from cache. Never share cache entries across users:
-RBAC is per user. The OBO token cache is in-process per replica. Moving it to a shared store needs
-encryption at rest and is only worth it at scale.
+Every question triggers live Azure calls. Cost Management has tight query quotas and only changes a
+few times a day. **Start here:** cache tool results per `(user oid, scope, query hash)` for ~1 hour
+(Azure Cache for Redis); keep the original `data_timestamp`/`sources` and add a "served from cache"
+caveat. Never share entries across users: RBAC is per user.
 
-## 2. No production-grade PostgreSQL connection handling
+## 2. SQLite on App Service storage
 
-A plain asyncpg pool with a password DSN from Key Vault. **Start here:**
-- Passwordless Entra auth: fetch a token for `https://ossrdbms-aad.database.windows.net/.default` via
-  Workload Identity per new connection (asyncpg `connect` with a password callable).
-- If the shared server fronts connections with PgBouncer in transaction mode: disable asyncpg's
-  prepared-statement cache (`statement_cache_size=0`) and avoid session-level state (our
-  `search_path` server setting would need moving to schema-qualified SQL).
-- Size the pool against the shared server's connection budget; add statement timeouts and retry on
-  failover.
-- Replace the idempotent `CREATE TABLE IF NOT EXISTS` at startup with versioned migrations (Alembic).
+Zero setup, survives restarts, fine for one instance and demo traffic. Not for scale-out: SQLite on
+the network-backed `/home` share does not support concurrent writers across instances. **Start here:**
+set the `database-url` secret (Key Vault reference) to Azure Database for PostgreSQL; the app switches
+automatically. Then add passwordless Entra auth, PgBouncer-safe settings and versioned migrations.
 
-## 3. No governed write/action capability
+## 3. Read-only, no governed actions
 
-CRIP is read-only end to end: no tool can change Azure state, and domain agents are restricted to the
-tools in their own definition. **Start here:** actions need a separate, explicitly approved flow:
-proposed-action records, human confirmation in the UI, a narrowly scoped OBO call, and a full audit
-row, with action tools living on a separate agent whose registration is reviewed separately.
+Optimizer *finds* idle resources and Advisor savings; it never deletes or resizes anything.
+**Start here:** a separate action agent with a proposal → human approval → narrowly scoped OBO call →
+audit row flow, reviewed separately from the read-only agents.
 
 ## 4. No continuous evaluation of answer accuracy
 
-We enforce that every figure *has* provenance, but nothing automatically checks that the model's
-composed prose *faithfully restates* the tool data (e.g. it didn't transpose two numbers). The UI
-mitigates this by showing the tool's own deterministic `answer` and data next to the model's text.
-**Start here:** a nightly job that samples `agent_invocations` + `messages` and checks that every
-number in the composed answer appears in the linked `data`, plus an LLM-judge faithfulness score,
-with an evaluation-sample table and a dashboard.
+Grounding guarantees every figure *has* provenance, not that the model's prose restates it perfectly
+(the UI mitigates this by showing each tool's deterministic answer and chart next to the prose).
+**Start here:** a nightly job comparing numbers in composed answers against the linked `data`, plus
+an LLM-judge faithfulness score and a dashboard.
 
-## 5. Single domain agent
+## 5. Anomaly detection is a simple statistic
 
-Only CostPulse exists. The Orchestrator, gateway, contract and persistence are built for N agents
-(model-driven routing over generated delegation tools). **Start here:**
-[architecture.md, "Adding the next agent"](architecture.md#adding-the-next-agent).
+Median/MAD over the selected window: explainable and deterministic, but it ignores weekly seasonality
+and gradual drift. **Start here:** Cost Management's built-in anomaly alerts, or a seasonal baseline
+(same weekday over 8 weeks).
 
-## Smaller items worth knowing
+## 6. Scope handling
 
-- **Throttling:** basic retry (max 3, honours `Retry-After`, ≤30s per wait). No circuit breaker, no
-  per-user rate limiting on `/api/chat`.
-- **Paging:** at most 10 pages per cost query; beyond that the answer is `partial` with a caveat.
-- **Scope choice:** if the user has several subscriptions and names none, CostPulse asks, or queries
-  up to 3. There is no management-group roll-up UI.
-- **Concurrent questions in one session:** Foundry rejects a new message while a run is active on the
-  thread; the second request gets a 502 envelope. The UI prevents this by disabling input while busy.
-- **Conversation history:** kept in Foundry threads and PostgreSQL, but the UI does not reload past
-  sessions (no `GET /api/sessions` yet).
-- **Delegated sub-runs** use a fresh Foundry thread per delegation, and those threads are not deleted.
-  Add cleanup (or thread TTL) before real volume.
-- **Frontend:** minimal styling, no markdown rendering (plain text, on purpose: model output is never
-  injected as HTML), no automated UI tests.
-- **Observability:** Azure Monitor OpenTelemetry auto-instrumentation only; no custom metrics for
-  tool latency or grounding rates yet (the data is in `agent_invocations`).
+Advisor, idle-resource and inventory tools work per subscription or resource group; spend and forecast
+also accept management groups. No multi-subscription roll-up UI.
+
+## Smaller items
+
+- Throttling: basic retry (≤3, honours `Retry-After`). No circuit breaker, no per-user rate limit.
+- Paging: at most 10 pages per query; beyond that answers are `partial`.
+- One Foundry thread per conversation; delegated sub-runs use fresh threads that are not cleaned up.
+- The UI does not reload past conversations (no `GET /api/sessions` yet).
+- App Service health check uses `/health` (database ping); with one instance it cannot fail over.
+- Charts are hand-rolled SVG (no charting library) to keep the bundle small; no export to CSV yet
+  (each chart has a data table).

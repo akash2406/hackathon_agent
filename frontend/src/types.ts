@@ -50,3 +50,15 @@ export interface ErrorEnvelope {
     retryable: boolean;
   };
 }
+
+export interface AgentCapability {
+  key: string;
+  name: string;
+  description: string;
+  summary: string;
+  examples: string[];
+}
+
+export interface Capabilities {
+  agents: AgentCapability[];
+}

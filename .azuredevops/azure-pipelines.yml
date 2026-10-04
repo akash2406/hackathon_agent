@@ -1,19 +1,15 @@
-# CRIP CI/CD on a SELF-HOSTED agent pool.
+# CRIP CI/CD -> Azure App Service (one container image: UI + API).
 #
-#   Build   ─► tests, frontend build, secret scan, Helm lint        (every PR and every push)
-#   Package ─► validate env variables, build + push both images    (not for PRs)
-#   Approve ─► ManualValidation (agentless)                        (when deploy=true)
-#   Deploy  ─► helm upgrade --install into the allocated namespace, smoke test
+#   Build      tests, UI build, secret scan                           (every PR and push)
+#   Provision  Bicep: identity, ACR, App Insights, plan, web app      (only when provisionInfra=true)
+#   Package    docker build, push to ACR as :<build id> and :latest   (not for PRs)
+#   Approve    manual gate                                            (prod only)
+#   Deploy     point the web app at the new image, smoke-test the URL
 #
-# Configuration lives in committed variable files, not a variable group:
-#   .azuredevops/vars/common.yml   shared settings
-#   .azuredevops/vars/<env>.yml    landing-zone allocations for that environment
-# Those files hold NON-SECRET identifiers only. The pipeline needs no secrets:
-# ACR and AKS access come from service connections (referenced by name), and the
-# application's secrets stay in Key Vault (mounted into pods by the CSI driver).
-#
-# Push to main deploys to dev automatically. Prod is a manual run with
-# targetEnvironment=prod, only from main, and always behind the approval gate.
+# Settings live in committed variable files (identifiers only, no secrets):
+#   .azuredevops/vars/common.yml, .azuredevops/vars/<env>.yml
+# Azure access is one Azure Resource Manager service connection (see docs/pipeline.md).
+# Packages are downloaded from the public npm / PyPI registries.
 
 parameters:
   - name: targetEnvironment
@@ -21,6 +17,10 @@ parameters:
     type: string
     default: dev
     values: [dev, prod]
+  - name: provisionInfra
+    displayName: Run the Bicep template first (create/update Azure resources)
+    type: boolean
+    default: false
   - name: deploy
     displayName: Deploy after packaging
     type: boolean
@@ -40,10 +40,12 @@ variables:
   - name: imageTag
     value: $(Build.BuildId)
 
-# Every agent job runs on the environment's self-hosted pool. (Resolved at
-# compile time because it comes from the variable files above.)
+# Microsoft-hosted Ubuntu unless a self-hosted pool is named in the variable files.
 pool:
-  name: ${{ variables.agentPoolName }}
+  ${{ if eq(variables.agentPoolName, '') }}:
+    vmImage: ubuntu-latest
+  ${{ else }}:
+    name: ${{ variables.agentPoolName }}
 
 stages:
   # ---------------------------------------------------------------------------
@@ -52,18 +54,14 @@ stages:
     jobs:
       - job: backend
         displayName: Backend tests
-        workspace: { clean: all }
         steps:
-          - checkout: self
-            clean: true
+          - ${{ if eq(variables.agentPoolName, '') }}:
+              - task: UsePythonVersion@0
+                inputs: { versionSpec: "3.12" }
           - template: templates/agent-prereqs.yml
             parameters: { tools: [python] }
-          - template: templates/pip-config.yml
           - bash: |
               set -euo pipefail
-              # Fresh venv per run: self-hosted agents keep state between jobs.
-              # PIP_CONFIG_FILE (set by pip-config.yml) routes every install,
-              # including hatchling for the editable build, through Nexus.
               "$(pythonExecutable)" -m venv "$(Agent.TempDirectory)/venv"
               . "$(Agent.TempDirectory)/venv/bin/activate"
               python -m pip install --upgrade pip
@@ -77,25 +75,20 @@ stages:
               testRunTitle: backend
 
       - job: frontend
-        displayName: Frontend build
-        workspace: { clean: all }
+        displayName: Web UI build
         steps:
-          - checkout: self
-            clean: true
+          - ${{ if eq(variables.agentPoolName, '') }}:
+              - task: NodeTool@0
+                inputs: { versionSpec: "22.x" }
           - template: templates/agent-prereqs.yml
             parameters: { tools: [node] }
           - bash: npm ci --no-audit --no-fund && npm run build
             workingDirectory: frontend
             displayName: npm ci + build (includes tsc typecheck)
 
-      - job: checks
-        displayName: Secret scan + Helm lint
-        workspace: { clean: all }
+      - job: secrets
+        displayName: Secret scan
         steps:
-          - checkout: self
-            clean: true
-          - template: templates/agent-prereqs.yml
-            parameters: { tools: [helm] }
           - bash: |
               set -euo pipefail
               if command -v gitleaks > /dev/null 2>&1; then
@@ -105,197 +98,125 @@ stages:
                   dir /repo --config /repo/.gitleaks.toml --redact --verbose
               fi
             displayName: gitleaks (fails the build on any hardcoded secret)
-          - bash: |
-              set -euo pipefail
-              helm lint "$(chartPath)" -f "$(chartPath)/ci/lint-values.yaml" --namespace crip-lint
-              # The chart must refuse to render without landing-zone allocations.
-              if helm template t "$(chartPath)" --namespace x > /dev/null 2>&1; then
-                echo "##vso[task.logissue type=error]Chart rendered without landing-zone allocations"
-                exit 1
-              fi
-            displayName: helm lint + allocation guard
+
+  # ---------------------------------------------------------------------------
+  - ${{ if eq(parameters.provisionInfra, true) }}:
+      - stage: Provision
+        displayName: Provision Azure resources (Bicep)
+        dependsOn: Build
+        condition: and(succeeded(), ne(variables['Build.Reason'], 'PullRequest'))
+        jobs:
+          - job: bicep
+            steps:
+              - template: templates/validate-variables.yml
+                parameters:
+                  varsFile: .azuredevops/vars/${{ parameters.targetEnvironment }}.yml
+                  names: [resourceGroup, namePrefix, apiClientId, foundryProjectEndpoint, foundryModelDeployment]
+              - task: AzureCLI@2
+                displayName: az deployment group create
+                inputs:
+                  azureSubscription: ${{ variables.azureServiceConnection }}
+                  scriptType: bash
+                  scriptLocation: inlineScript
+                  inlineScript: |
+                    set -euo pipefail
+                    az group create -n "$(resourceGroup)" -l "$(location)" -o none
+                    az deployment group create -g "$(resourceGroup)" -n "$(deploymentName)" \
+                      -f infra/appservice/main.bicep \
+                      -p namePrefix="$(namePrefix)" apiClientId="$(apiClientId)" spaClientId="$(spaClientId)" \
+                         foundryProjectEndpoint="$(foundryProjectEndpoint)" foundryModelDeployment="$(foundryModelDeployment)" \
+                         oboCredentialMode="$(oboCredentialMode)" oboClientSecretKeyVaultUri="$(oboClientSecretKeyVaultUri)" \
+                         appServiceSku="$(appServiceSku)" \
+                      --query properties.outputs -o json
 
   # ---------------------------------------------------------------------------
   - stage: Package
-    displayName: Package images (${{ parameters.targetEnvironment }})
-    dependsOn: Build
+    displayName: Build + push image (${{ parameters.targetEnvironment }})
+    ${{ if eq(parameters.provisionInfra, true) }}:
+      dependsOn: Provision
+    ${{ else }}:
+      dependsOn: Build
     condition: and(succeeded(), ne(variables['Build.Reason'], 'PullRequest'))
     jobs:
-      - job: images
-        displayName: Build + push images
-        workspace: { clean: all }
+      - job: image
         steps:
-          - checkout: self
-            clean: true
-          - template: templates/validate-variables.yml
-            parameters:
-              varsFile: .azuredevops/vars/${{ parameters.targetEnvironment }}.yml
-              names:
-                - agentPoolName
-                - acrServiceConnection
-                - aksServiceConnection
-                - aksNamespace
-                - postgresSchema
-                - acrLoginServer
-                - acrRepositoryPath
-                - workloadIdentityClientId
-                - keyVaultName
-                - keyVaultTenantId
-                - postgresSecretName
-                - appInsightsSecretName
-                - entraTenantId
-                - apiClientId
-                - spaClientId
-                - foundryProjectEndpoint
-                - foundryModelDeployment
-                - ingressHost
-                - ingressClassName
-                - ingressControllerNamespace
-                - approvers
           - template: templates/agent-prereqs.yml
-            parameters: { tools: [docker, python] }
-          - template: templates/pip-config.yml
-          - task: Docker@2
-            displayName: Log in to ACR
+            parameters: { tools: [docker, az] }
+          - template: templates/resolve-names.yml
+          - task: AzureCLI@2
+            displayName: docker build + push to ACR
             inputs:
-              command: login
-              containerRegistry: ${{ variables.acrServiceConnection }}
-          # Plain docker build/push (not Docker@2 buildAndPush, which ignores
-          # --build-arg and --secret): lets the base images point at an ACR
-          # mirror and hands the Nexus pip config to the build as a BuildKit
-          # secret, so the index URL/credentials are never baked into a layer.
-          - bash: |
-              set -euo pipefail
-              export DOCKER_BUILDKIT=1
-              registry="$(acrLoginServer)/$(acrRepositoryPath)"
-              pip_secrets=(--secret "id=pipconf,src=$(Agent.TempDirectory)/pip-docker.conf")
-              ca="$(pipCaBundlePath)"
-              if [ -n "$ca" ] && [[ "$ca" != '$('* ]]; then
-                pip_secrets+=(--secret "id=pipca,src=$ca")
-              fi
-              docker build -f backend/Dockerfile \
-                "${pip_secrets[@]}" \
-                --build-arg PYTHON_IMAGE="$(baseImagePython)" \
-                --label org.opencontainers.image.revision="$(Build.SourceVersion)" \
-                -t "$registry/backend:$(imageTag)" .
-              docker build -f frontend/Dockerfile \
-                --build-arg NODE_IMAGE="$(baseImageNode)" \
-                --build-arg NGINX_IMAGE="$(baseImageNginx)" \
-                --label org.opencontainers.image.revision="$(Build.SourceVersion)" \
-                -t "$registry/frontend:$(imageTag)" .
-              docker push "$registry/backend:$(imageTag)"
-              docker push "$registry/frontend:$(imageTag)"
-            displayName: Build + push backend and frontend
-          - bash: |
-              registry="$(acrLoginServer)/$(acrRepositoryPath)"
-              docker image rm -f "$registry/backend:$(imageTag)" "$registry/frontend:$(imageTag)" || true
-            displayName: Remove local images (keep agent disk clean)
-            condition: always()
-          - task: Docker@2
-            displayName: Log out of ACR
-            condition: always()
-            inputs:
-              command: logout
-              containerRegistry: ${{ variables.acrServiceConnection }}
-          - publish: $(chartPath)
-            artifact: chart
-            displayName: Publish Helm chart
+              azureSubscription: ${{ variables.azureServiceConnection }}
+              scriptType: bash
+              scriptLocation: inlineScript
+              inlineScript: |
+                set -euo pipefail
+                export DOCKER_BUILDKIT=1
+                az acr login --name "$(acrName)"
+                image="$(acrLoginServer)/$(imageRepository)"
+                docker build -t "$image:$(imageTag)" -t "$image:latest" \
+                  --label org.opencontainers.image.revision="$(Build.SourceVersion)" .
+                docker push "$image:$(imageTag)"
+                docker push "$image:latest"
+                docker image rm -f "$image:$(imageTag)" "$image:latest" > /dev/null || true
 
   # ---------------------------------------------------------------------------
   - ${{ if eq(parameters.deploy, true) }}:
-      - stage: Approve
-        displayName: Approve ${{ parameters.targetEnvironment }} deployment
-        dependsOn: Package
-        # Prod only ever deploys from main.
-        condition: >-
-          and(succeeded(),
-              or(eq('${{ parameters.targetEnvironment }}', 'dev'),
-                 eq(variables['Build.SourceBranch'], 'refs/heads/main')))
-        jobs:
-          - job: approve
-            displayName: Manual approval
-            pool: server   # agentless: does not occupy a self-hosted agent while waiting
-            timeoutInMinutes: 1440
-            steps:
-              - task: ManualValidation@1
+      - ${{ if eq(parameters.targetEnvironment, 'prod') }}:
+          - stage: Approve
+            displayName: Approve prod deployment
+            dependsOn: Package
+            condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/main'))
+            jobs:
+              - job: approve
+                pool: server   # agentless: holds no agent while waiting
                 timeoutInMinutes: 1440
-                inputs:
-                  notifyUsers: $(approvers)
-                  approvers: $(approvers)
-                  instructions: >-
-                    Approve deployment of CRIP image tag $(imageTag) to
-                    ${{ parameters.targetEnvironment }} (namespace $(aksNamespace)).
-                    Check the Build stage test results and secret scan first.
-                  onTimeout: reject
+                steps:
+                  - task: ManualValidation@1
+                    timeoutInMinutes: 1440
+                    inputs:
+                      notifyUsers: $(approvers)
+                      approvers: $(approvers)
+                      instructions: Approve deployment of CRIP image $(imageTag) to prod.
+                      onTimeout: reject
 
       - stage: Deploy
-        displayName: Deploy to ${{ parameters.targetEnvironment }}
-        dependsOn: Approve
+        displayName: Deploy to App Service (${{ parameters.targetEnvironment }})
+        ${{ if eq(parameters.targetEnvironment, 'prod') }}:
+          dependsOn: Approve
+        ${{ else }}:
+          dependsOn: Package
         condition: succeeded()
         jobs:
-          - deployment: helm
-            displayName: helm upgrade --install
+          - deployment: webapp
             environment: crip-${{ parameters.targetEnvironment }}
-            workspace: { clean: all }
             strategy:
               runOnce:
                 deploy:
                   steps:
-                    - download: current
-                      artifact: chart
+                    - checkout: self
                     - template: templates/agent-prereqs.yml
-                      parameters: { tools: [helm, kubectl] }
-                    - task: HelmDeploy@0
-                      displayName: helm upgrade --install $(releaseName)
+                      parameters: { tools: [az] }
+                    - template: templates/resolve-names.yml
+                    - task: AzureWebAppContainer@1
+                      displayName: Point web app at $(imageRepository):$(imageTag)
                       inputs:
-                        connectionType: Kubernetes Service Connection
-                        kubernetesServiceEndpoint: ${{ variables.aksServiceConnection }}
-                        namespace: $(aksNamespace)
-                        command: upgrade
-                        chartType: FilePath
-                        chartPath: $(Pipeline.Workspace)/chart
-                        releaseName: $(releaseName)
-                        install: true
-                        waitForExecution: true
-                        arguments: >-
-                          --atomic --wait --timeout $(helmTimeout)
-                          --set image.tag=$(imageTag)
-                          --set allocations.namespace=$(aksNamespace)
-                          --set allocations.postgres.schema=$(postgresSchema)
-                          --set allocations.acr.loginServer=$(acrLoginServer)
-                          --set allocations.acr.repositoryPath=$(acrRepositoryPath)
-                          --set allocations.workloadIdentity.clientId=$(workloadIdentityClientId)
-                          --set allocations.keyVault.name=$(keyVaultName)
-                          --set allocations.keyVault.tenantId=$(keyVaultTenantId)
-                          --set allocations.keyVault.postgresConnectionStringSecret=$(postgresSecretName)
-                          --set allocations.keyVault.appInsightsConnectionStringSecret=$(appInsightsSecretName)
-                          --set allocations.entra.tenantId=$(entraTenantId)
-                          --set allocations.entra.apiClientId=$(apiClientId)
-                          --set allocations.entra.spaClientId=$(spaClientId)
-                          --set allocations.foundry.projectEndpoint=$(foundryProjectEndpoint)
-                          --set allocations.foundry.modelDeployment=$(foundryModelDeployment)
-                          --set backend.replicas=$(backendReplicas)
-                          --set frontend.replicas=$(frontendReplicas)
-                          --set ingress.enabled=$(ingressEnabled)
-                          --set ingress.host=$(ingressHost)
-                          --set ingress.className=$(ingressClassName)
-                          --set-string ingress.tlsSecretName=$(ingressTlsSecretName)
-                          --set networkPolicy.ingressControllerNamespace=$(ingressControllerNamespace)
-                    # End-to-end reachability: ingress -> nginx -> backend. An
-                    # unauthenticated chat call must come back as the typed 401
-                    # envelope, which proves the backend (not just nginx) answered.
+                        azureSubscription: ${{ variables.azureServiceConnection }}
+                        appName: $(webAppName)
+                        resourceGroupName: $(resourceGroup)
+                        containers: $(acrLoginServer)/$(imageRepository):$(imageTag)
                     - bash: |
-                        set -euo pipefail
-                        base="$(smokeTestScheme)://$(ingressHost)"
-                        curl -fsS -o /dev/null "$base/" && echo "frontend OK"
-                        body=$(curl -sS -X POST -H 'Content-Type: application/json' -d '{"message":"ping"}' \
-                          -w '\n%{http_code}' "$base/api/chat")
-                        code=$(echo "$body" | tail -n 1)
-                        echo "$body" | head -n 1
-                        if [ "$code" != "401" ] || ! echo "$body" | grep -q '"unauthenticated"'; then
-                          echo "##vso[task.logissue type=error]Expected 401 unauthenticated envelope from /api/chat, got HTTP $code"
-                          exit 1
-                        fi
-                        echo "backend reachable through ingress OK"
-                      displayName: Smoke test through ingress
-                      condition: and(succeeded(), eq(variables['ingressEnabled'], 'true'))
+                        set -uo pipefail
+                        url="$(webAppUrl)"
+                        echo "Waiting for $url to serve the new image (container pull + start can take a few minutes)..."
+                        for i in $(seq 1 40); do
+                          if curl -fsS --max-time 10 "$url/health/live" > /dev/null; then break; fi
+                          sleep 15
+                        done
+                        curl -fsS --max-time 10 "$url/health" || { echo "##vso[task.logissue type=error]$url/health is not OK"; exit 1; }
+                        code=$(curl -sS -o /tmp/chat.json -w '%{http_code}' -X POST -H 'Content-Type: application/json' -d '{"message":"ping"}' "$url/api/chat")
+                        grep -q '"unauthenticated"' /tmp/chat.json && [ "$code" = 401 ] \
+                          || { echo "##vso[task.logissue type=error]expected 401 envelope from /api/chat, got $code"; exit 1; }
+                        curl -fsS "$url/" | grep -q 'id="root"' || { echo "##vso[task.logissue type=error]UI not served at $url/"; exit 1; }
+                        echo "CRIP is live at $url"
+                      displayName: Smoke test the live app

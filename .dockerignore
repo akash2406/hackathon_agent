@@ -3,9 +3,13 @@
 **/dist
 **/__pycache__
 **/.pytest_cache
+**/*.tsbuildinfo
 .git
 .secrets
+.local
+.env
 tests
 docs
 infra
+scripts
 .azuredevops

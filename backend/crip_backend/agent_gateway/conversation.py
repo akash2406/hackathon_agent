@@ -61,6 +61,10 @@ class ConversationService:
         self._definitions = definitions
         self._tools = tools
 
+    @property
+    def definitions(self) -> AgentDefinitions:
+        return self._definitions
+
     async def ask(self, *, thread_id: str | None, message: str, ctx: ToolContext) -> ConversationResult:
         # One Foundry thread per CRIP session, so the Orchestrator keeps the
         # conversation's context across questions.

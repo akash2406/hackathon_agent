@@ -82,10 +82,10 @@ async def test_no_tool_call_means_no_delegation_even_if_message_mentions_cost(to
 
 async def test_unknown_tool_chosen_by_model_is_reported_not_executed(tool_ctx):
     def orchestrator(message, outputs):
-        return ToolCalls([("ask_inventory", {"question": "list VMs"})]) if not outputs else Final(outputs[0])
+        return ToolCalls([("ask_payroll", {"question": "list salaries"})]) if not outputs else Final(outputs[0])
 
     svc, client = service({"crip-orchestrator": orchestrator, "crip-costpulse": costpulse_policy})
-    result = await svc.ask(thread_id=None, message="list my VMs", ctx=tool_ctx)
+    result = await svc.ask(thread_id=None, message="show me payroll", ctx=tool_ctx)
     assert "No agent is available" in result.answer
     assert client.runs_by_agent["crip-costpulse"] == 0
 

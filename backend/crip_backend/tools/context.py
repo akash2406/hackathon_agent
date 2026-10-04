@@ -16,7 +16,7 @@ from uuid import UUID
 
 from ..auth.entra import AuthenticatedUser
 from ..auth.obo import DelegatedToken
-from ..azure_clients.cost_management import CostManagementClient
+from ..azure_clients.arm import ArmClient
 from ..contracts import AgentResponse
 
 
@@ -37,15 +37,15 @@ class ToolContext:
     user: AuthenticatedUser
     session_id: UUID | None
     tokens: DelegatedTokenSource
-    cost_client: CostManagementClient
+    arm: ArmClient
     contributions: list[ToolContribution] = field(default_factory=list)
 
     async def arm_token(self) -> str:
         """The signed-in user's OBO-exchanged ARM token. The only token tools may send to Azure."""
         token = await self.tokens.get_token(session_id=self.session_id, user=self.user)
         # Re-checked on every use, including cache hits: cheap, and it makes
-        # "Cost Management only ever sees the user's own token" an enforced
-        # invariant rather than a property of how the cache happens to be keyed.
+        # "Azure only ever sees the user's own token" an enforced invariant
+        # rather than a property of how the cache happens to be keyed.
         token.assert_belongs_to(self.user)
         return token.access_token
 

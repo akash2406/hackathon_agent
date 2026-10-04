@@ -1,12 +1,12 @@
 """Create the git-ignored .secrets/ directory for local development.
 
-It mirrors the Key Vault CSI mount the backend reads in AKS
-(/mnt/secrets-store/<secret-name>):
+The app reads a secret named ``<name>`` from env var ``CRIP_SECRET_<NAME>`` (in
+App Service: a Key Vault reference) or, locally, from ``.secrets/<name>``:
 
-    .secrets/local-postgres-password      random password for docker-compose Postgres
-    .secrets/postgres-connection-string   DSN the backend reads (CRIP_POSTGRES_SECRET_NAME)
-    .secrets/obo-client-secret            YOU paste a dev client secret of the backend API
-                                          app registration here (only for local OBO)
+    .secrets/obo-client-secret        YOU paste a client secret of the API app registration here
+                                      (only needed when CRIP_OBO_CREDENTIAL_MODE=client_secret, the local default)
+    .secrets/local-postgres-password  random password, only for `docker compose --profile postgres`
+    .secrets/database-url             optional; if present the app uses PostgreSQL instead of SQLite
 
 Usage:  python scripts/init_local_secrets.py
 Existing files are never overwritten.
@@ -21,24 +21,16 @@ ROOT = Path(__file__).resolve().parents[1]
 SECRETS = ROOT / ".secrets"
 
 
-def write_once(name: str, value: str) -> None:
-    path = SECRETS / name
-    if path.exists():
-        print(f"kept     {path.relative_to(ROOT)}")
-        return
-    path.write_text(value + "\n", encoding="utf-8")
-    print(f"created  {path.relative_to(ROOT)}")
-
-
 def main() -> None:
     SECRETS.mkdir(exist_ok=True)
-    password_file = SECRETS / "local-postgres-password"
-    password = password_file.read_text().strip() if password_file.exists() else secrets.token_urlsafe(24)
-    write_once("local-postgres-password", password)
-    write_once("postgres-connection-string", f"postgresql://crip:{password}@localhost:5432/crip")
+    pw = SECRETS / "local-postgres-password"
+    if not pw.exists():
+        pw.write_text(secrets.token_urlsafe(24) + "\n", encoding="utf-8")
+        print(f"created  {pw.relative_to(ROOT)}  (for the optional postgres compose profile)")
     obo = SECRETS / "obo-client-secret"
     if not obo.exists():
-        print(f"TODO     paste a dev client secret for the backend API app registration into {obo.relative_to(ROOT)}")
+        print(f"TODO     paste a client secret of the API app registration into {obo.relative_to(ROOT)}")
+    print("SQLite is used unless .secrets/database-url exists. Nothing else is required.")
 
 
 if __name__ == "__main__":

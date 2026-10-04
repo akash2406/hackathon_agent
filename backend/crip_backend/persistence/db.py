@@ -1,13 +1,9 @@
-"""asyncpg connection pool bound to the allocated schema.
-
-Used by the chat endpoint (via the repository) and the readiness probe. The DSN
-comes from the Key Vault secret mounted by the CSI driver; it is never in code,
-config or an environment variable literal.
+"""PostgreSQL connection pool (optional store, used when the ``database-url`` secret is set).
 
 Deliberately simple for the hackathon build (see docs/known-simplifications.md):
-a plain asyncpg pool with a connection-string password. Before production load,
-revisit: transaction-mode pooler (PgBouncer) compatibility, prepared-statement
-caching, and passwordless Entra token auth per connection.
+a plain asyncpg pool with a connection-string password from Key Vault. Before
+production load, revisit: PgBouncer compatibility, prepared-statement caching,
+and passwordless Entra token auth per connection.
 """
 
 from __future__ import annotations
@@ -23,7 +19,12 @@ async def _init_connection(conn: asyncpg.Connection) -> None:
 
 
 async def create_pool(dsn: str, schema: str, *, min_size: int = 1, max_size: int = 10) -> asyncpg.Pool:
-    # schema is validated as a plain identifier in Settings before it gets here.
+    # Create the schema first (on its own connection) so search_path can point at it.
+    conn = await asyncpg.connect(dsn)
+    try:
+        await conn.execute(f'CREATE SCHEMA IF NOT EXISTS "{schema}"')  # schema validated as an identifier in Settings
+    finally:
+        await conn.close()
     return await asyncpg.create_pool(
         dsn,
         min_size=min_size,

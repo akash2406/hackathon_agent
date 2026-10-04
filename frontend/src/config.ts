@@ -13,6 +13,8 @@ export interface CripConfig {
   spaClientId: string;
   apiScope: string;
   apiBaseUrl: string;
+  /** Sample-data preview without sign-in. Set by the server (CRIP_UI_DEMO_MODE); never on in Azure. */
+  demoMode: boolean;
 }
 
 declare global {
@@ -27,9 +29,9 @@ function loadConfig(): CripConfig {
     (k) => !raw[k] || String(raw[k]).startsWith("<"),
   );
   if (missing.length > 0) {
-    throw new Error(`config.js is missing: ${missing.join(", ")}. See README "Local development".`);
+    throw new Error(`config.js is missing: ${missing.join(", ")}. See README "Run it".`);
   }
-  return { apiBaseUrl: "", ...raw } as CripConfig;
+  return { apiBaseUrl: "", demoMode: false, ...raw } as CripConfig;
 }
 
 export const config = loadConfig();

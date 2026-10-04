@@ -53,7 +53,7 @@ async def chat(
 
     await repo.append_message(session.id, owner_oid=user.object_id, role="user", content=body.message)
 
-    ctx = ToolContext(user=user, session_id=session.id, tokens=services.tokens, cost_client=services.cost_client)
+    ctx = ToolContext(user=user, session_id=session.id, tokens=services.tokens, arm=services.arm)
     try:
         result = await services.conversation.ask(thread_id=session.foundry_thread_id, message=body.message, ctx=ctx)
     except FoundryRunError as exc:

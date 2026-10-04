@@ -1,10 +1,10 @@
-# Verifies the self-hosted agent has the tools a job needs, and prints their
-# versions into the log. Self-hosted agents do not get the hosted-image tool
-# cache, so nothing is downloaded here: missing tools fail fast with a clear message.
+# Verifies the agent has the tools a job needs and prints their versions.
+# Microsoft-hosted agents have them all; on a self-hosted pool missing tools
+# fail fast with a clear message instead of an obscure error later.
 
 parameters:
   - name: tools
-    type: object   # any of: python, node, docker, helm, kubectl
+    type: object   # any of: python, node, docker, az
 
 steps:
   - bash: |
@@ -19,12 +19,11 @@ steps:
       }
       for tool in $REQUIRED_TOOLS; do
         case "$tool" in
-          python)  need "$PYTHON_EXE" "Python 3.12 is required for the backend tests" "--version" ;;
-          node)    need node "Node.js 22 is required for the frontend build" "--version"
+          python)  need "$PYTHON_EXE" "Python 3.12+ is required for the backend tests" "--version" ;;
+          node)    need node "Node.js 20.19+/22 is required for the UI build" "--version"
                    need npm "npm is required for the frontend build" "--version" ;;
           docker)  need docker "Docker is required to build and push images" "--version" ;;
-          helm)    need helm "Helm 3 is required for lint and deploy" "version --short" ;;
-          kubectl) need kubectl "kubectl is required by HelmDeploy" "version --client" ;;
+          az)      need az "Azure CLI is required for ACR login and deployment" "version --output tsv" ;;
           *)       echo "##vso[task.logissue type=error]Unknown prerequisite '$tool'"; failed=1 ;;
         esac
       done

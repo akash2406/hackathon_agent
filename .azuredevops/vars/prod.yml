@@ -1,46 +1,21 @@
-# Environment: prod
-#
-# Same shape as dev.yml. Deployed only from the main branch, after manual
-# approval. NON-SECRET values only: this file is committed to git.
+# Environment: prod. Same shape as dev.yml. Deployed only from main, after approval.
+# Committed to git: identifiers only, NEVER secrets.
 
 variables:
-  environmentName: prod
+  azureServiceConnection: "<arm-service-connection-name>"
 
-  agentPoolName: "<self-hosted-agent-pool-name>"
+  resourceGroup: "<rg-crip-prod>"
+  location: "westeurope"
+  namePrefix: "crip-prod"
+  appServiceSku: "P0v3"
 
-  acrServiceConnection: "<docker-registry-service-connection-name>"
-  aksServiceConnection: "<kubernetes-service-connection-name>"
+  apiClientId: "<app-registration-client-id>"
+  spaClientId: ""
+  oboCredentialMode: "managed_identity"
+  oboClientSecretKeyVaultUri: ""
 
-  # #1
-  aksNamespace: "<aks-namespace>"
-  # #2
-  postgresSchema: "<postgres-schema>"
-  # #3
-  acrLoginServer: "<registry>.azurecr.io"
-  acrRepositoryPath: "<tenants/crip>"
-  # #4
-  workloadIdentityClientId: "<managed-identity-client-id>"
-  # #5
-  keyVaultName: "<key-vault-name>"
-  keyVaultTenantId: "<tenant-id>"
-  postgresSecretName: "<postgres-connection-string-secret-name>"
-  # #8
-  appInsightsSecretName: "<appinsights-connection-string-secret-name>"
-  # #6
-  entraTenantId: "<tenant-id>"
-  apiClientId: "<backend-api-app-registration-client-id>"
-  spaClientId: "<frontend-spa-app-registration-client-id>"
-  # #7
   foundryProjectEndpoint: "https://<resource>.services.ai.azure.com/api/projects/<project>"
-  foundryModelDeployment: "<model-deployment-name>"
+  foundryModelDeployment: "gpt-4o"
 
-  ingressEnabled: "true"
-  ingressHost: "<crip.example.com>"
-  ingressClassName: "<ingress-class>"
-  ingressControllerNamespace: "<ingress-controller-namespace>"
-  ingressTlsSecretName: ""
-  # Scheme the self-hosted agent uses to reach the ingress for the post-deploy smoke test
-  smokeTestScheme: https
-
-  backendReplicas: "2"
-  frontendReplicas: "2"
+  acrName: ""
+  webAppName: ""

@@ -1,39 +1,19 @@
 # Pipeline variables shared by every environment.
-#
-# This file is committed to git. It must only ever contain NON-SECRET values
-# (names, IDs, endpoints, versions). Secrets live in Key Vault and reach the pods
-# through the CSI driver; the pipeline itself needs none (it authenticates to
-# ACR/AKS through service connections, which are referenced here by name only).
+# Committed to git: identifiers only, NEVER secrets.
 
 variables:
-  # Build tooling expected on the self-hosted agent (see docs/landing-zone-requests.md, "CI/CD").
-  pythonExecutable: python3.12
-  chartPath: infra/helm/crip
-  releaseName: crip
-  helmTimeout: 10m
+  # Empty = Microsoft-hosted ubuntu-latest. Set to your self-hosted pool name to use it
+  # (agents need Python 3.12, Node 22, Docker and the Azure CLI; see docs/pipeline.md).
+  agentPoolName: ""
+  pythonExecutable: python3
 
-  # Python packages: every pip install (pipeline tests, backend image build)
-  # uses the internal Nexus PyPI repository, never public PyPI.
-  # Nexus PyPI URLs end in /simple, e.g.
-  #   https://nexus.example.com/repository/pypi-group/simple
-  # If Nexus requires authentication, add SECRET pipeline variables
-  # nexusUsername / nexusPassword in the pipeline UI (never in this file).
-  pipIndexUrl: "https://<nexus-host>/repository/<pypi-repository>/simple"
-  # Optional: PEM bundle on the self-hosted agent that trusts the corporate CA
-  # which issued Nexus's TLS certificate (leave empty if the agent already trusts it).
-  # TLS verification is never disabled (no --trusted-host).
-  pipCaBundlePath: ""
+  # Image name inside ACR: <acr>.azurecr.io/<imageRepository>:<build id>
+  imageRepository: crip
+  # Name of the Bicep deployment the pipeline creates / reads outputs from.
+  deploymentName: crip-appservice
 
-  # Base images for the container builds. Override per environment to point at an
-  # ACR mirror if the self-hosted agent cannot reach Docker Hub.
-  baseImagePython: python:3.12-slim
-  baseImageNode: node:22-alpine
-  baseImageNginx: nginxinc/nginx-unprivileged:1.27-alpine
-
-  # Secret scanner: the gitleaks binary on the agent is used if present,
-  # otherwise this image is run with Docker.
+  # Secret scanner image (used only if the agent has no gitleaks binary).
   gitleaksImage: zricethezav/gitleaks:v8.30.1
 
-  # Manual approval (ManualValidation@1): users/groups who approve deployments,
-  # comma-separated, e.g. "[CRIP]\\Release Approvers,someone@contoso.com".
-  approvers: "<approvers>"
+  # Who may approve prod deployments (ManualValidation), comma-separated.
+  approvers: "<approver@contoso.com>"

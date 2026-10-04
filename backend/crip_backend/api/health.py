@@ -1,9 +1,9 @@
-"""Health probes used by the Helm chart.
+"""Health probes (App Service health check and local checks).
 
-``GET /health`` (readiness) checks the database, because without it the service
+``GET /health`` (the App Service health-check path) checks the database, because without it the service
 cannot record provenance and so should not receive chat traffic.
 ``GET /health/live`` (liveness) checks only that the process is serving; a
-database outage must not make Kubernetes restart-loop healthy pods.
+database outage must not make App Service recycle a healthy instance.
 """
 
 from __future__ import annotations

@@ -36,13 +36,13 @@ def repo():
     return InMemoryRepository()
 
 
-def make_app(settings, user, repo, token_source, cost_client, policies):
+def make_app(settings, user, repo, token_source, arm_client, policies):
     gateway = FoundryAgentGateway(ScriptedAgentsClient(policies), poll_interval_seconds=0)
     services = Services(
         settings=settings,
         token_validator=FakeValidator(user),
         tokens=token_source,
-        cost_client=cost_client,
+        arm=arm_client,
         conversation=ConversationService(gateway, load_definitions(REPO_ROOT / "foundry" / "definitions"), STUB_TOOLS),
         repository=repo,
     )
@@ -56,8 +56,8 @@ def client_for(app):
 AUTH = {"Authorization": "Bearer good-token"}
 
 
-async def test_chat_happy_path_returns_grounded_answer_and_persists_provenance(settings, user, repo, token_source, cost_client):
-    app = make_app(settings, user, repo, token_source, cost_client, {"crip-orchestrator": orchestrator_policy, "crip-costpulse": costpulse_policy})
+async def test_chat_happy_path_returns_grounded_answer_and_persists_provenance(settings, user, repo, token_source, arm_client):
+    app = make_app(settings, user, repo, token_source, arm_client, {"crip-orchestrator": orchestrator_policy, "crip-costpulse": costpulse_policy})
     async with client_for(app) as client:
         resp = await client.post("/api/chat", json={"message": "How much did we spend this month?"}, headers=AUTH)
 
@@ -79,8 +79,8 @@ async def test_chat_happy_path_returns_grounded_answer_and_persists_provenance(s
     assert [m["seq"] for m in repo.messages] == [1, 2, 3, 4]
 
 
-async def test_orchestrator_failure_returns_typed_error_envelope(settings, user, repo, token_source, cost_client):
-    app = make_app(settings, user, repo, token_source, cost_client, {"crip-orchestrator": lambda m, o: Fail(), "crip-costpulse": costpulse_policy})
+async def test_orchestrator_failure_returns_typed_error_envelope(settings, user, repo, token_source, arm_client):
+    app = make_app(settings, user, repo, token_source, arm_client, {"crip-orchestrator": lambda m, o: Fail(), "crip-costpulse": costpulse_policy})
     async with client_for(app) as client:
         resp = await client.post("/api/chat", json={"message": "cost?"}, headers=AUTH)
 
@@ -92,33 +92,33 @@ async def test_orchestrator_failure_returns_typed_error_envelope(settings, user,
     assert repo.messages[-1]["status"].value == "error"
 
 
-async def test_missing_token_is_rejected_with_envelope(settings, user, repo, token_source, cost_client):
-    app = make_app(settings, user, repo, token_source, cost_client, {"crip-orchestrator": orchestrator_policy, "crip-costpulse": costpulse_policy})
+async def test_missing_token_is_rejected_with_envelope(settings, user, repo, token_source, arm_client):
+    app = make_app(settings, user, repo, token_source, arm_client, {"crip-orchestrator": orchestrator_policy, "crip-costpulse": costpulse_policy})
     async with client_for(app) as client:
         resp = await client.post("/api/chat", json={"message": "hi"})
     assert resp.status_code == 401
     assert resp.json()["error"]["code"] == "unauthenticated"
 
 
-async def test_another_users_session_is_not_found(settings, user, repo, token_source, cost_client):
+async def test_another_users_session_is_not_found(settings, user, repo, token_source, arm_client):
     foreign = await repo.create_session(owner_oid=OTHER_OID, tenant_id="t", title="theirs")
-    app = make_app(settings, user, repo, token_source, cost_client, {"crip-orchestrator": orchestrator_policy, "crip-costpulse": costpulse_policy})
+    app = make_app(settings, user, repo, token_source, arm_client, {"crip-orchestrator": orchestrator_policy, "crip-costpulse": costpulse_policy})
     async with client_for(app) as client:
         resp = await client.post("/api/chat", json={"message": "hi", "session_id": str(foreign.id)}, headers=AUTH)
     assert resp.status_code == 404
     assert resp.json()["error"]["code"] == "session_not_found"
 
 
-async def test_ungrounded_reply_is_labelled(settings, user, repo, token_source, cost_client):
-    app = make_app(settings, user, repo, token_source, cost_client, {"crip-orchestrator": lambda m, o: Final("Hello!"), "crip-costpulse": costpulse_policy})
+async def test_ungrounded_reply_is_labelled(settings, user, repo, token_source, arm_client):
+    app = make_app(settings, user, repo, token_source, arm_client, {"crip-orchestrator": lambda m, o: Final("Hello!"), "crip-costpulse": costpulse_policy})
     async with client_for(app) as client:
         body = (await client.post("/api/chat", json={"message": "hello"}, headers=AUTH)).json()
     assert body["grounded"] is False and body["status"] == "no_data"
     assert "not grounded" in body["caveats"][0]
 
 
-async def test_health_endpoints(settings, user, repo, token_source, cost_client):
-    app = make_app(settings, user, repo, token_source, cost_client, {"crip-orchestrator": orchestrator_policy, "crip-costpulse": costpulse_policy})
+async def test_health_endpoints(settings, user, repo, token_source, arm_client):
+    app = make_app(settings, user, repo, token_source, arm_client, {"crip-orchestrator": orchestrator_policy, "crip-costpulse": costpulse_policy})
     async with client_for(app) as client:
         assert (await client.get("/health")).json() == {"status": "ok"}
         assert (await client.get("/health/live")).json() == {"status": "ok"}

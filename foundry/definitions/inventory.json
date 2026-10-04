@@ -1,0 +1,45 @@
+{
+  "role": "domain",
+  "key": "inventory",
+  "name": "crip-inventory",
+  "description": "CRIP domain agent: what exists in Azure and how well it is tagged, from Azure Resource Graph.",
+  "summary": "What runs where, and how well it is tagged for cost ownership.",
+  "instructions_file": "inventory.md",
+  "delegation_tool": {
+    "name": "ask_inventory",
+    "description": "Ask the Inventory agent WHAT RESOURCES EXIST in Azure: how many resources, of which types, in which regions and resource groups, and tag coverage/governance (what share of resources carry a given tag such as owner, costCenter or environment, and which resource groups are worst). Answers come from live Azure Resource Graph data."
+  },
+  "examples": [
+    "What resources do I have, and in which regions?",
+    "How many of my resources are missing an 'owner' tag?"
+  ],
+  "tools": [
+    {
+      "name": "inventory_resource_summary",
+      "description": "Resource counts by type and by location for a subscription or resource group, and optionally tag coverage for one tag key per resource group.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "scope": {
+            "type": "string",
+            "description": "Subscription id (GUID), /subscriptions/<id>, or /subscriptions/<id>/resourceGroups/<name>."
+          },
+          "tag_key": {
+            "type": "string",
+            "description": "Optional tag name to measure coverage for, e.g. 'owner', 'costCenter', 'environment'."
+          },
+          "top_n": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 50,
+            "description": "How many types/locations/resource groups to itemise. Defaults to 10."
+          }
+        },
+        "required": [
+          "scope"
+        ],
+        "additionalProperties": false
+      }
+    }
+  ]
+}
