@@ -4,7 +4,7 @@
 #   Provision  Bicep: identity, App Insights, plan, Python web app      (only when provisionInfra=true)
 #   Package    zip: API + agent definitions + built UI (artifact)      (not for PRs)
 #   Approve    manual gate                                            (prod only)
-#   Deploy     scripts/deploy-appservice.sh: zip deploy, smoke-test the URL
+#   Deploy     scripts/deploy.py: app settings, agents, zip deploy, smoke test
 #
 # Settings live in committed variable files (identifiers only, no secrets):
 #   .azuredevops/vars/common.yml, .azuredevops/vars/<env>.yml
@@ -111,23 +111,14 @@ stages:
                   varsFile: .azuredevops/vars/${{ parameters.targetEnvironment }}.yml
                   names: [resourceGroup, namePrefix, apiClientId, foundryProjectEndpoint, foundryModelDeployment]
               - task: AzureCLI@2
-                displayName: az deployment group create
+                displayName: Bicep via scripts/deploy.py --steps provision
                 inputs:
                   azureSubscription: ${{ variables.azureServiceConnection }}
                   scriptType: bash
                   scriptLocation: inlineScript
                   inlineScript: |
                     set -euo pipefail
-                    az group create -n "$(resourceGroup)" -l "$(location)" -o none
-                    az deployment group create -g "$(resourceGroup)" -n "$(deploymentName)" \
-                      -f infra/appservice/main.bicep \
-                      -p namePrefix="$(namePrefix)" apiClientId="$(apiClientId)" spaClientId="$(spaClientId)" \
-                         foundryProjectEndpoint="$(foundryProjectEndpoint)" foundryModelDeployment="$(foundryModelDeployment)" \
-                         azureAccessMode="$(azureAccessMode)" managementGroupId="$(managementGroupId)" \
-                         platformAdminGroupIds="$(platformAdminGroupIds)" costReaderGroupIds="$(costReaderGroupIds)" readerGroupIds="$(readerGroupIds)" \
-                         oboCredentialMode="$(oboCredentialMode)" oboClientSecretKeyVaultUri="$(oboClientSecretKeyVaultUri)" \
-                         appServiceSku="$(appServiceSku)" uiDemoMode="$(uiDemoMode)" \
-                      --query properties.outputs -o json
+                    "$(pythonExecutable)" scripts/deploy.py --env ${{ parameters.targetEnvironment }} --steps provision
 
   # ---------------------------------------------------------------------------
   - stage: Package
@@ -194,15 +185,16 @@ stages:
                       artifact: app
                     - template: templates/agent-prereqs.yml
                       parameters: { tools: [python, az] }
-                    - template: templates/resolve-names.yml
                     - task: AzureCLI@2
-                      displayName: Deploy code + smoke test (scripts/deploy-appservice.sh)
+                      displayName: App settings + agents + code + smoke test (scripts/deploy.py)
                       inputs:
                         azureSubscription: ${{ variables.azureServiceConnection }}
                         scriptType: bash
                         scriptLocation: inlineScript
                         inlineScript: |
                           set -euo pipefail
-                          PYTHON="$(pythonExecutable)" bash scripts/deploy-appservice.sh \
-                            --resource-group "$(resourceGroup)" --name "$(webAppName)" \
+                          # --agents app: the web app registers the Foundry agents at startup with its
+                          # managed identity, so the service connection needs no Foundry role.
+                          "$(pythonExecutable)" scripts/deploy.py --env ${{ parameters.targetEnvironment }} \
+                            --steps settings,agents,code --agents app \
                             --package "$(Pipeline.Workspace)/app/crip-app.zip"

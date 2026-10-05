@@ -138,8 +138,8 @@ No `if "cost" in message`. That breaks the moment questions span domains, and th
 ## Hosting: one app on App Service
 
 - [`scripts/build_package.py`](../scripts/build_package.py) builds the UI with Node and zips it with
-  the API and the agent definitions; [`scripts/deploy-appservice.sh`](../scripts/deploy-appservice.sh)
-  zip-deploys it and App Service installs the Python packages. FastAPI serves `/api`,
+  the API and the agent definitions; [`scripts/deploy.py`](../scripts/deploy.py)
+  syncs the app settings, registers the agents, zip-deploys it and App Service installs the Python packages. FastAPI serves `/api`,
   `/health`, a generated `/config.js`, and the SPA with deep-link fallback. One origin means no CORS
   and one redirect URI.
 - Configuration = App Settings ([config.py](../backend/crip_backend/config.py)); secrets by name

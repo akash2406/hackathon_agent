@@ -72,7 +72,7 @@ foundry/            agent definitions (JSON + instructions) and the registration
 frontend/           React + TypeScript chat UI with MSAL sign-in and charts
 infra/appservice/   Bicep: managed identity, App Insights, App Service plan + Python web app
 .azuredevops/       pipeline: test -> (provision) -> build zip -> deploy -> smoke test
-scripts/            deploy-appservice.sh + build_package.py (zip deploy), setup scripts
+scripts/            deploy.py (settings + agents + zip deploy), build_package.py, setup scripts
 scripts/            setup-entra-app.sh, local-e2e.sh, init_local_secrets.py
 docs/               architecture, azure-setup, pipeline, demo-script, known-simplifications
 tests/              pytest suite
@@ -140,7 +140,7 @@ Follow **[docs/azure-setup.md](docs/azure-setup.md)** (about 15 minutes). In sho
 1. `az deployment group create` with [`infra/appservice/main.bicep`](infra/appservice/main.bicep): creates the managed identity, App Insights and the Python web app;
 2. `scripts/setup-entra-app.sh --url <web app url> --mi-principal-id <from Bicep outputs>`: sign-in plus OBO with no secret;
 3. give the managed identity **Azure AI User** on your Foundry project;
-4. `bash scripts/deploy-appservice.sh -g <rg>` (or the pipeline): builds the zip, deploys it and smoke-tests the site; the app registers its agents on startup.
+4. `python scripts/deploy.py --env dev` (or the pipeline): pushes the settings from `.azuredevops/vars/dev.yml` to the web app, registers the agents in Foundry, deploys the zip and smoke-tests the site. Add `--provision` to run step 1 too.
 
 No app registration yet? Deploy with `uiDemoMode=true` first to get a live sample-data preview: [docs/pipeline.md](docs/pipeline.md#first-deployment-before-the-app-registration-exists).
 

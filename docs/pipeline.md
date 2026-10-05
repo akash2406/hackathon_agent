@@ -13,10 +13,10 @@ deployment. No internal artifact feed is needed.
   vars/dev.yml, vars/prod.yml     per-environment: service connection, resource group, Entra/Foundry IDs
   templates/agent-prereqs.yml     fails fast if a self-hosted agent lacks python/node/az
   templates/validate-variables.yml  fails fast, naming each unset "<...>" variable
-  templates/resolve-names.yml     finds the web app name (variable file or Bicep outputs)
 scripts/
-  build_package.py                builds the zip (also usable on your machine)
-  deploy-appservice.sh            zip deploy + smoke test (the pipeline runs this same script)
+  deploy.py                       Bicep, app settings, Foundry agents, zip deploy, smoke test
+                                  (the pipeline runs this same script; so can you)
+  build_package.py                builds the zip
 ```
 
 ## Stages
@@ -24,10 +24,10 @@ scripts/
 | Stage | When | What |
 |---|---|---|
 | Build | every PR and push | pytest, UI build (typecheck), gitleaks secret scan |
-| Provision | run parameter `provisionInfra=true` | `az deployment group create` with `infra/appservice/main.bicep` |
+| Provision | run parameter `provisionInfra=true` | `scripts/deploy.py --steps provision`: `az deployment group create` with `infra/appservice/main.bicep` |
 | Package | not a PR | `scripts/build_package.py`: `npm ci` + build, zip API + definitions + UI, publish artifact `app` |
 | Approve | prod only, main branch only | `ManualValidation` (agentless, holds no agent) |
-| Deploy | after Package (dev) / Approve (prod) | `scripts/deploy-appservice.sh`: `az webapp deploy` (zip), App Service installs `requirements.txt`; smoke test waits for `/health`, checks the UI and the `/api/chat` 401 envelope |
+| Deploy | after Package (dev) / Approve (prod) | `scripts/deploy.py --steps settings,agents,code --agents app`: app settings from the variable files, `az webapp deploy` (zip; App Service installs `requirements.txt`), smoke test (`/health`, UI, `/api/chat` 401, `/config.js` shows the new settings). The web app registers the agents at startup with its managed identity |
 
 A push to `main` deploys **dev**. For **prod**, queue the pipeline on `main` with *Target environment
 = prod*. First run for a new environment: tick *provisionInfra*.
@@ -36,12 +36,16 @@ A push to `main` deploys **dev**. For **prod**, queue the pipeline on `main` wit
 
 ```bash
 az login
-bash scripts/deploy-appservice.sh --resource-group <rg>      # builds the zip, deploys, smoke-tests
+python scripts/deploy.py --env dev                 # settings -> agents -> code -> smoke test
+python scripts/deploy.py --env dev --provision     # first time: create the Azure resources too
+python scripts/deploy.py --env dev --steps settings   # only push changed variables to the web app
 ```
 
-The web app name is read from the Bicep deployment outputs (or pass `--name`). Use
-`--package <zip>` to deploy an existing package, `--skip-ui-build` to reuse `frontend/dist`. Runs in
-Git Bash on Windows, WSL, Linux and macOS.
+Same variable files as the pipeline, so edit `vars/<env>.yml` and re-run. By default the agents are
+registered in Foundry as you (needs **Azure AI User** on the project); `--agents app` lets the web app
+do it with its managed identity. The web app name comes from the Bicep outputs (or `webAppName`).
+Other options: `--package <zip>`, `--skip-ui-build`, `--set name=value`, `--no-smoke-test`. Runs in
+PowerShell, Git Bash, Linux and macOS (Python 3.11+ and the Azure CLI).
 
 ## One-time setup
 

@@ -78,15 +78,25 @@ or resource data.
 
 ## Step 4: Deploy the code
 
-Either the pipeline ([pipeline.md](pipeline.md)), or by hand (Git Bash, WSL, Linux or macOS):
+Either the pipeline ([pipeline.md](pipeline.md)), or by hand (PowerShell, Git Bash, Linux or macOS):
 
 ```bash
-bash scripts/deploy-appservice.sh --resource-group rg-crip-team1
+python scripts/deploy.py --env dev            # add --provision to also run Step 1
 ```
 
-It builds the UI, zips it with the API and the agent definitions (`scripts/build_package.py`),
-uploads the zip with `az webapp deploy`, lets App Service install `requirements.txt` (Oryx build) and
-smoke-tests the site. The web app runs Python 3.12 with the startup command from the Bicep template.
+It reads `.azuredevops/vars/common.yml` + `dev.yml`, then:
+
+1. **settings**: sets the runtime, startup command and every `CRIP_*` app setting from the variable
+   files (only the changed ones; it prints names, never values). The UI needs nothing separate: it
+   reads its settings from `/config.js`, which the backend builds from these app settings;
+2. **agents**: creates/updates the 7 agents in your Foundry project as *you* (`az login`; needs
+   **Azure AI User** on the project). `--agents app` leaves it to the web app's managed identity at
+   startup instead; demo mode skips it;
+3. **code**: builds the UI, zips it with the API and agent definitions, `az webapp deploy`, and App
+   Service installs `requirements.txt`;
+4. **smoke test**: `/health`, the UI, the `/api/chat` 401, and that `/config.js` shows the new settings.
+
+`--steps settings` only updates settings; `--set name=value` overrides a variable for one run.
 
 Open `<webAppUrl>`, sign in, ask *"Give me a cost overview"*.
 
@@ -114,7 +124,7 @@ Any secret is read by name: env var `CRIP_SECRET_<NAME>` (App Service Key Vault 
 
 | Symptom | Cause / fix |
 |---|---|
-| Site shows the default App Service page | No code deployed yet: run `scripts/deploy-appservice.sh` |
+| Site shows the default App Service page | No code deployed yet: run `python scripts/deploy.py --env <env>` |
 | App fails to start, log shows `No module named ...` | Packages not installed: `SCM_DO_BUILD_DURING_DEPLOYMENT` must be `true` (Bicep sets it); redeploy |
 | Chat returns 502 "Agent 'crip-orchestrator' is not registered" | Missing *Azure AI User* role on Foundry, or wrong model deployment. App logs (Log stream) show the registration error |
 | Answers say "could not obtain a delegated Azure token (AADSTS65001)" | Admin consent for Azure Service Management not granted |

@@ -1,7 +1,7 @@
 // CRIP on Azure App Service (Linux, Python 3.12, code deployment): everything except Entra and Foundry.
 //
 //   az deployment group create -g <rg> -f infra/appservice/main.bicep -p infra/appservice/main.bicepparam
-//   bash scripts/deploy-appservice.sh -g <rg>          # then deploy the code (zip)
+//   python scripts/deploy.py --env dev                 # then app settings, agents and code (zip)
 //
 // Creates: user-assigned managed identity, Log Analytics + Application Insights,
 // Linux App Service plan and the web app (Python runtime; App Service installs the
@@ -67,7 +67,7 @@ param registerAgentsOnStartup bool = true
 param uiDemoMode bool = false
 
 var suffix = uniqueString(resourceGroup().id, namePrefix)
-// Code deployment: scripts/deploy-appservice.sh uploads a zip (API + built UI) and App Service's
+// Code deployment: scripts/deploy.py uploads a zip (API + built UI) and App Service's
 // build (Oryx) installs requirements.txt. The zip keeps the repo layout, hence --app-dir backend.
 var startupCommand = 'python -m uvicorn --app-dir backend --factory crip_backend.main:create_app --host 0.0.0.0 --port 8000 --proxy-headers'
 
