@@ -16,15 +16,18 @@ typed ``ErrorEnvelope`` (502/504) - never a made-up answer.
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends
+import time
 
+from fastapi import APIRouter, Depends, Request
+
+from ..access.model import UserAccess
 from ..agent_gateway.foundry_gateway import FoundryRunError, FoundryRunTimeout
 from ..auth.entra import AuthenticatedUser, require_user
 from ..contracts import ChatRequest, ChatResponse, ErrorCode, ErrorEnvelope, ResponseStatus, compose_status
 from ..errors import ApiError
 from ..services import Services
-from ..tools.context import ToolContext
 from . import get_services
+from .deps import audit, require_access, tool_context
 
 router = APIRouter(prefix="/api", tags=["chat"])
 
@@ -39,9 +42,12 @@ _ERRORS = {
 @router.post("/chat", response_model=ChatResponse, responses=_ERRORS)
 async def chat(
     body: ChatRequest,
+    request: Request,
     user: AuthenticatedUser = Depends(require_user),
+    access: UserAccess = Depends(require_access),
     services: Services = Depends(get_services),
 ) -> ChatResponse:
+    started = time.perf_counter()
     repo = services.repository
 
     if body.session_id is not None:
@@ -53,7 +59,8 @@ async def chat(
 
     await repo.append_message(session.id, owner_oid=user.object_id, role="user", content=body.message)
 
-    ctx = ToolContext(user=user, session_id=session.id, tokens=services.tokens, arm=services.arm)
+    # Tools the agents call are authorised against this user's access, per subscription.
+    ctx = tool_context(services, user, access, session.id)
     try:
         result = await services.conversation.ask(thread_id=session.foundry_thread_id, message=body.message, ctx=ctx)
     except FoundryRunError as exc:
@@ -69,6 +76,7 @@ async def chat(
             error_code=code.value,
             contributions=ctx.contributions,
         )
+        await audit(request, services, user, action="chat", scope=None, outcome="failed", started=started, detail=body.message)
         raise ApiError(
             code,
             "The Orchestrator could not produce an answer, so none is shown. Please retry.",
@@ -93,6 +101,7 @@ async def chat(
         status=status,
         contributions=ctx.contributions,
     )
+    await audit(request, services, user, action="chat", scope=None, outcome=status.value, started=started, detail=body.message)
     return ChatResponse(
         session_id=session.id,
         message_id=message.id,

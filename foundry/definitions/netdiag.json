@@ -1,0 +1,87 @@
+{
+  "role": "domain",
+  "key": "netdiag",
+  "name": "crip-netdiag",
+  "description": "CRIP domain agent (Network Doctor): troubleshoots why one Azure resource cannot reach another.",
+  "summary": "Why can't my app reach the database? Traces NSGs, routes, firewall, peering and private endpoint DNS hop by hop.",
+  "instructions_file": "netdiag.md",
+  "delegation_tool": {
+    "name": "ask_network_doctor",
+    "description": "Ask the Network Doctor to TROUBLESHOOT CONNECTIVITY: why a VM, app or subnet cannot reach another resource (database, storage, Key Vault, another VM, an IP) on a port; which NSG rule, route, Azure Firewall rule, VNet peering, private endpoint DNS setting or service firewall blocks it; the effective NSG rules and routes of a VM; whether a private endpoint resolves privately; where a resource or IP lives on the network; subnet IP exhaustion and broken peerings. Include the source, destination, port and protocol if the user gave them."
+  },
+  "examples": [
+    "Why can't app-vm-01 reach sql-prod on port 1433?",
+    "Does my storage account's private endpoint resolve privately from vnet-app?",
+    "Which subnets are running out of IP addresses?"
+  ],
+  "tools": [
+    {
+      "name": "netdiag_check_connectivity",
+      "description": "Trace the network path from a source to a destination on a port and say whether Azure networking allows it, naming the blocking hop (NSG rule, route, Azure Firewall rule, VNet peering, private endpoint DNS or the service's own firewall) and the fix. Uses Azure Network Watcher verdicts when the source is a VM.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "scope": {"type": "string", "description": "Subscription id (GUID) or /subscriptions/<id> that contains the SOURCE."},
+          "source": {"type": "string", "description": "Where the traffic starts: VM, network interface or App Service name, a private IP address, a resource id, or 'vnet/subnet'."},
+          "destination": {"type": "string", "description": "Where the traffic goes: VM, private endpoint, storage account, SQL server, Key Vault, Cosmos DB or App Service name, its FQDN (e.g. mystore.blob.core.windows.net), an IP address or a resource id."},
+          "port": {"type": "integer", "minimum": 1, "maximum": 65535, "description": "Destination port, e.g. 1433 for SQL, 443 for HTTPS, 5432 for PostgreSQL, 22 for SSH."},
+          "protocol": {"type": "string", "enum": ["tcp", "udp"], "description": "Defaults to tcp."}
+        },
+        "required": ["scope", "source", "destination", "port"],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "netdiag_find_endpoint",
+      "description": "Where a resource or IP lives on the network: private IP, VNet and subnet, NSGs, route table, DNS servers, peerings, private endpoints and public network access.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "scope": {"type": "string", "description": "Subscription id (GUID) or /subscriptions/<id>."},
+          "query": {"type": "string", "description": "Resource name, private IP address, FQDN, resource id or 'vnet/subnet'."}
+        },
+        "required": ["scope", "query"],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "netdiag_effective_rules",
+      "description": "Azure's effective security rules (all NSGs combined) and effective routes for a running VM or network interface.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "scope": {"type": "string", "description": "Subscription id (GUID) or /subscriptions/<id>."},
+          "resource": {"type": "string", "description": "VM or network interface name, or its resource id."}
+        },
+        "required": ["scope", "resource"],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "netdiag_private_endpoint_dns",
+      "description": "Private endpoint and DNS check for a service (storage, Key Vault, SQL, Cosmos DB, App Service...): its private endpoints, the privatelink DNS zone, whether the A record matches, and which VNets resolve it privately vs to the public address.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "scope": {"type": "string", "description": "Subscription id (GUID) or /subscriptions/<id> whose VNets should be checked."},
+          "resource": {"type": "string", "description": "Service name, FQDN or resource id."}
+        },
+        "required": ["scope", "resource"],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "netdiag_subnet_health",
+      "description": "Virtual network health: subnet IP address usage (exhaustion), NSG / route table per subnet, delegations, peering state and sync, overlapping address spaces.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "scope": {"type": "string", "description": "Subscription id (GUID), /subscriptions/<id>, or /subscriptions/<id>/resourceGroups/<name>."},
+          "vnet": {"type": "string", "description": "Optional: only this virtual network (name)."}
+        },
+        "required": ["scope"],
+        "additionalProperties": false
+      }
+    }
+  ]
+}

@@ -1,16 +1,24 @@
 /**
- * App-wide state: which API implementation is active, the selected Azure
- * subscription, a tiny path router, and the hook that loads a grounded tool
- * result for a dashboard card.
+ * App-wide state: the active API, who the user is and what they may see
+ * (/api/me), the selected subscription, a tiny path router, and the hook that
+ * loads a grounded tool result for a dashboard card.
+ *
+ * The UI hides what a user cannot use, but it is never the enforcement point:
+ * the backend checks access on every call and answers "Access denied" itself.
  */
 import { createContext, useCallback, useContext, useEffect, useState, type ReactNode } from "react";
-import { ApiFailure, type Api } from "./api";
-import type { AgentResponse } from "./types";
+import { ApiFailure, type Api, type DemoPersona } from "./api";
+import type { AccessLevel, AgentResponse, Me, SubscriptionAccess } from "./types";
 
 // --------------------------------------------------------------------------- router
 
-export type Route = "/" | "/spend" | "/trends" | "/savings" | "/inventory" | "/ask";
-export const ROUTES: Route[] = ["/", "/spend", "/trends", "/savings", "/inventory", "/ask"];
+export type Route =
+  | "/" | "/spend" | "/trends" | "/savings" | "/inventory" | "/security" | "/network" | "/ask"
+  | "/admin/estate" | "/admin/access" | "/admin/usage" | "/admin/settings";
+export const ROUTES: Route[] = [
+  "/", "/spend", "/trends", "/savings", "/inventory", "/security", "/network", "/ask",
+  "/admin/estate", "/admin/access", "/admin/usage", "/admin/settings",
+];
 
 function currentRoute(): Route {
   const path = window.location.pathname.replace(/\/+$/, "") || "/";
@@ -34,20 +42,20 @@ export function useRouter(): [Route, (to: Route) => void] {
 
 // --------------------------------------------------------------------------- context
 
-export interface Subscription {
-  subscription_id: string;
-  display_name: string;
-  state: string;
-}
-
 interface AppState {
   api: Api;
-  subscriptions: Subscription[] | null; // null = loading
-  subscriptionError: string | null;
+  me: Me | null; // null = loading
+  meError: string | null;
+  subscriptions: SubscriptionAccess[] | null;
   scope: string | null;
   setScope: (scope: string) => void;
+  /** Access level for the selected subscription. */
+  level: AccessLevel | null;
+  isAdmin: boolean;
   navigate: (to: Route) => void;
   userName: string;
+  /** Demo mode only: switch the sample persona to show role-based views. */
+  persona?: { value: DemoPersona; set: (p: DemoPersona) => void };
 }
 
 const Ctx = createContext<AppState | null>(null);
@@ -60,33 +68,43 @@ export function useApp(): AppState {
 
 const SCOPE_KEY = "crip.scope";
 
-export function AppProvider({ api, navigate, userName, children }: { api: Api; navigate: (to: Route) => void; userName: string; children: ReactNode }) {
-  const [subscriptions, setSubscriptions] = useState<Subscription[] | null>(null);
-  const [subscriptionError, setSubscriptionError] = useState<string | null>(null);
+export function AppProvider({
+  api,
+  navigate,
+  fallbackName,
+  persona,
+  children,
+}: {
+  api: Api;
+  navigate: (to: Route) => void;
+  fallbackName: string;
+  persona?: AppState["persona"];
+  children: ReactNode;
+}) {
+  const [me, setMe] = useState<Me | null>(null);
+  const [meError, setMeError] = useState<string | null>(null);
   const [scope, setScopeState] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
+    setMe(null);
     api
-      .callTool("costpulse_list_subscriptions", {})
-      .then((r) => {
+      .me()
+      .then((m) => {
         if (cancelled) return;
-        const subs = ((r.data?.["subscriptions"] as Subscription[] | undefined) ?? []).filter((s) => s.subscription_id);
-        setSubscriptions(subs);
-        if (r.status === "error") setSubscriptionError(r.answer);
+        setMe(m);
         let saved: string | null = null;
         try {
           saved = localStorage.getItem(SCOPE_KEY);
         } catch {
           /* storage unavailable: fine */
         }
-        const preferred = subs.find((s) => `/subscriptions/${s.subscription_id}` === saved) ?? subs[0];
-        if (preferred) setScopeState(`/subscriptions/${preferred.subscription_id}`);
+        const preferred = m.subscriptions.find((s) => `/subscriptions/${s.subscription_id}` === saved) ?? m.subscriptions[0];
+        setScopeState(preferred ? `/subscriptions/${preferred.subscription_id}` : null);
       })
       .catch((err) => {
         if (cancelled) return;
-        setSubscriptions([]);
-        setSubscriptionError(err instanceof ApiFailure ? err.message : String(err));
+        setMeError(err instanceof ApiFailure ? err.message : String(err));
       });
     return () => {
       cancelled = true;
@@ -102,8 +120,25 @@ export function AppProvider({ api, navigate, userName, children }: { api: Api; n
     }
   }, []);
 
+  const current = me?.subscriptions.find((s) => `/subscriptions/${s.subscription_id}` === scope) ?? null;
   return (
-    <Ctx.Provider value={{ api, subscriptions, subscriptionError, scope, setScope, navigate, userName }}>{children}</Ctx.Provider>
+    <Ctx.Provider
+      value={{
+        api,
+        me,
+        meError,
+        subscriptions: me ? me.subscriptions : null,
+        scope,
+        setScope,
+        level: current?.level ?? null,
+        isAdmin: !!me?.is_platform_admin,
+        navigate,
+        userName: me?.user.name ?? fallbackName,
+        persona,
+      }}
+    >
+      {children}
+    </Ctx.Provider>
   );
 }
 
@@ -115,28 +150,33 @@ export type ToolState =
   | { state: "done"; response: AgentResponse }
   | { state: "failed"; failure: ApiFailure };
 
-/** Load one grounded tool result for the current scope; re-runs when the scope or args change. */
-export function useTool(name: string, args: Record<string, unknown> = {}): [ToolState, () => void] {
+/**
+ * Load one grounded tool result; re-runs when the scope or args change.
+ * ``scoped: false`` for estate-wide tools that take no subscription.
+ */
+export function useTool(name: string, args: Record<string, unknown> = {}, opts: { scoped?: boolean; enabled?: boolean } = {}): [ToolState, () => void] {
   const { api, scope } = useApp();
+  const scoped = opts.scoped ?? true;
+  const enabled = opts.enabled ?? true;
   const [state, setState] = useState<ToolState>({ state: "idle" });
   const [nonce, setNonce] = useState(0);
   const key = JSON.stringify(args);
 
   useEffect(() => {
-    if (!scope) {
+    if (!enabled || (scoped && !scope)) {
       setState({ state: "idle" });
       return;
     }
     let cancelled = false;
     setState({ state: "loading" });
     api
-      .callTool(name, { scope, ...JSON.parse(key) })
+      .callTool(name, scoped ? { scope, ...JSON.parse(key) } : JSON.parse(key))
       .then((response) => !cancelled && setState({ state: "done", response }))
       .catch((err) => !cancelled && setState({ state: "failed", failure: err instanceof ApiFailure ? err : new ApiFailure(String(err), "client_error", null, true) }));
     return () => {
       cancelled = true;
     };
-  }, [api, name, scope, key, nonce]);
+  }, [api, name, scope, key, nonce, scoped, enabled]);
 
   return [state, () => setNonce((n) => n + 1)];
 }

@@ -63,7 +63,7 @@ async def test_capabilities_lists_agents_and_examples(ui_app):
     async with client(ui_app) as c:
         caps = (await c.get("/api/capabilities")).json()
     keys = {a["key"] for a in caps["agents"]}
-    assert keys == {"costpulse", "optimizer", "inventory"}
+    assert keys == {"costpulse", "optimizer", "inventory", "governance", "netdiag", "platform"}
     assert all(a["examples"] for a in caps["agents"])
     assert all(a["summary"] and len(a["summary"]) < 120 for a in caps["agents"])  # short, user-facing
 

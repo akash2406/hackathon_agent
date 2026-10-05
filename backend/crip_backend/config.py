@@ -22,6 +22,14 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
+class AzureAccessMode(StrEnum):
+    # CRIP's managed identity reads Azure (read-only roles on the management
+    # group); CRIP decides per user what they may see (access.resolver).
+    APP_IDENTITY = "app_identity"
+    # Every Azure call runs as the signed-in user (on-behalf-of).
+    USER_OBO = "user_obo"
+
+
 class OboCredentialMode(StrEnum):
     # The API app registration trusts the web app's user-assigned managed
     # identity (federated identity credential). No secret exists anywhere.
@@ -45,6 +53,20 @@ class Settings(BaseSettings):
     api_audience: str | None = None  # defaults to api://<api_client_id>
     spa_client_id: str | None = None  # defaults to api_client_id
     required_scope: str = "access_as_user"
+
+    # --- Access model (docs/access-model.md)
+    azure_access_mode: AzureAccessMode = AzureAccessMode.APP_IDENTITY
+    # Limit CRIP to subscriptions under this management group (id/name), and/or an explicit list.
+    management_group_id: str | None = None
+    subscription_ids: str = ""  # comma-separated; empty = all the app identity can see
+    # Grant levels from the user's Azure role assignments on each subscription.
+    rbac_access_check: bool = True
+    # Entra security group object ids (comma-separated) mapped to access levels.
+    platform_admin_group_ids: str = ""
+    cost_reader_group_ids: str = ""
+    reader_group_ids: str = ""
+    access_cache_seconds: int = 900
+    graph_endpoint: str = "https://graph.microsoft.com"
     obo_credential_mode: OboCredentialMode = OboCredentialMode.CLIENT_SECRET
     obo_client_secret_name: str = "obo-client-secret"
     # User-assigned managed identity of the web app (App Service sets nothing

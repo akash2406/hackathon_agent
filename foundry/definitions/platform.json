@@ -1,0 +1,47 @@
+{
+  "role": "domain",
+  "key": "platform",
+  "name": "crip-platform",
+  "description": "CRIP domain agent for PLATFORM ADMINS: Azure access review, estate-wide overview and CRIP usage.",
+  "summary": "For platform admins: who has access to what, the whole estate at a glance, and who uses CRIP.",
+  "instructions_file": "platform.md",
+  "delegation_tool": {
+    "name": "ask_platform",
+    "description": "Ask the Platform agent (ONLY for users with the CRIP Platform admin role) about governance ACROSS the estate: who holds Owner / Contributor / Reader roles on a subscription (access review, guests, direct user grants, deleted identities), an overview of every subscription (month-to-date cost, secure score, Advisor counts), and CRIP's own usage log (who used CRIP, how often, what was denied). Non-admins receive an access-denied result."
+  },
+  "examples": [
+    "Who has Owner access on this subscription?",
+    "Give me an overview of all subscriptions.",
+    "Who used CRIP this week?"
+  ],
+  "tools": [
+    {
+      "name": "platform_access_review",
+      "description": "Role assignments that apply to a subscription (including inherited), with names, and findings: owner count, privileged roles granted directly to users, guests with privileged roles, assignments to deleted identities.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "scope": {"type": "string", "description": "Subscription id (GUID) or /subscriptions/<id>."}
+        },
+        "required": ["scope"],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "platform_estate_overview",
+      "description": "One row per subscription in CRIP's scope: month-to-date cost, Defender secure score and Advisor recommendation counts.",
+      "parameters": {"type": "object", "properties": {}, "additionalProperties": false}
+    },
+    {
+      "name": "platform_crip_usage",
+      "description": "CRIP's own usage log: users, requests, denials and recent activity over the last N days.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "days": {"type": "integer", "minimum": 1, "maximum": 90, "description": "Look-back window in days. Defaults to 7."}
+        },
+        "additionalProperties": false
+      }
+    }
+  ]
+}

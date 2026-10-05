@@ -36,10 +36,19 @@ Median/MAD over the selected window: explainable and deterministic, but it ignor
 and gradual drift. **Start here:** Cost Management's built-in anomaly alerts, or a seasonal baseline
 (same weekday over 8 weeks).
 
-## 6. Scope handling
+## 6. Access model trade-offs
 
-Advisor, idle-resource and inventory tools work per subscription or resource group; spend and forecast
-also accept management groups. No multi-subscription roll-up UI.
+In the default `app_identity` mode CRIP's identity holds standing **read** access to the estate, and
+CRIP (not Azure) decides per user what to show, at subscription granularity. PIM-eligible (not
+activated) roles, custom roles and deny assignments are not evaluated; decisions are cached for 15
+minutes. **Start here:** `user_obo` mode for exact per-user RBAC, PIM-aware checks via the
+Microsoft Graph / ARM eligibility APIs, and shorter cache TTLs for privileged pages.
+
+## 7. Scope handling
+
+Dashboards work per subscription or resource group; spend and forecast also accept management
+groups, and platform admins get an estate-wide overview. There is no per-team roll-up (e.g. by
+cost-center tag across subscriptions) yet.
 
 ## Smaller items
 

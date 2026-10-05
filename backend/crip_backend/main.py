@@ -23,7 +23,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 
-from .api import capabilities, chat, health, tools
+from .api import admin, capabilities, chat, health, me, tools
 from .config import Settings, get_settings
 from .contracts import ErrorCode
 from .errors import ApiError, install_error_handlers
@@ -74,6 +74,8 @@ def create_app(settings: Settings | None = None, services: Services | None = Non
 
     app.include_router(health.router)
     app.include_router(capabilities.router)
+    app.include_router(me.router)
+    app.include_router(admin.router)
     app.include_router(chat.router)
     app.include_router(tools.router)
     _mount_ui(app, settings)

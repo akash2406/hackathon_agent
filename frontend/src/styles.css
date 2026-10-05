@@ -400,3 +400,44 @@ button.chip:hover { border-color: var(--brand); color: var(--brand); }
   .composer { padding: 12px 16px; }
   .proof dl { grid-template-columns: 1fr; }
 }
+
+/* ---------- access & admin ---------- */
+.nav-section { font-size: 0.68rem; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; color: rgba(201, 214, 240, 0.55); padding: 10px 12px 4px; }
+.nav-item.locked { opacity: 0.55; }
+.nav-item.locked .nav-label .icon { margin-left: 6px; vertical-align: -2px; }
+.access-pill { font-size: 0.75rem; font-weight: 700; padding: 5px 10px; border-radius: 999px; white-space: nowrap; }
+.access-pill.cost { background: color-mix(in srgb, var(--status-good) 12%, var(--panel)); color: var(--ok-ink); }
+.access-pill.resources { background: color-mix(in srgb, var(--status-warning) 16%, var(--panel)); color: var(--warn-ink); }
+.admin-badge { margin-left: 8px; font-size: 0.68rem; font-weight: 700; padding: 2px 7px; border-radius: 6px; color: #fff; background: linear-gradient(135deg, var(--brand), #7b5cff); vertical-align: 1px; }
+.access-needed { max-width: 620px; margin: 64px auto; text-align: center; background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius); padding: 40px 32px; box-shadow: var(--shadow); }
+.access-needed h1 { font-size: 1.4rem; margin-bottom: 10px; }
+.access-needed p { color: var(--text-2); margin-top: 8px; line-height: 1.55; }
+.access-needed p.muted { color: var(--muted); font-size: 0.9rem; }
+.access-icon { width: 60px; height: 60px; margin: 0 auto 18px; border-radius: 18px; display: grid; place-items: center; background: var(--brand-soft); color: var(--brand); }
+.access-actions { display: flex; gap: 10px; justify-content: center; margin-top: 22px; flex-wrap: wrap; }
+
+.finding-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 12px; }
+.finding { border: 1px solid var(--border); border-radius: 12px; padding: 14px; background: var(--panel-2); display: flex; flex-direction: column; gap: 6px; }
+.finding.sev-high { border-color: color-mix(in srgb, var(--status-critical) 40%, var(--border)); background: color-mix(in srgb, var(--status-critical) 4%, var(--panel)); }
+.finding.sev-medium { border-color: color-mix(in srgb, var(--status-warning) 45%, var(--border)); }
+.finding-head { display: flex; justify-content: space-between; align-items: center; }
+.finding-count { font-size: 1.6rem; font-weight: 800; letter-spacing: -0.02em; }
+.finding ul { list-style: none; margin: 4px 0 0; padding: 0; font-size: 0.8rem; display: flex; flex-direction: column; gap: 3px; }
+.ok-line { display: inline-flex; gap: 6px; align-items: center; color: var(--ok-ink); font-size: 0.85rem; font-weight: 600; }
+.explain { margin: 0; padding-left: 18px; display: flex; flex-direction: column; gap: 8px; font-size: 0.86rem; color: var(--text-2); }
+.table.clickable tbody tr { cursor: pointer; }
+.score-pill { font-weight: 700; padding: 2px 8px; border-radius: 999px; font-size: 0.82rem; }
+.score-pill.good { color: var(--ok-ink); background: color-mix(in srgb, var(--status-good) 12%, var(--panel)); }
+.score-pill.warn { color: var(--warn-ink); background: color-mix(in srgb, var(--status-warning) 16%, var(--panel)); }
+.score-pill.bad { color: var(--error-ink); background: color-mix(in srgb, var(--status-critical) 10%, var(--panel)); }
+.outcome { font-size: 0.72rem; font-weight: 700; padding: 2px 8px; border-radius: 999px; text-transform: uppercase; letter-spacing: 0.03em; background: var(--panel-2); color: var(--text-2); }
+.outcome.ok, .outcome.partial { color: var(--ok-ink); background: color-mix(in srgb, var(--status-good) 10%, var(--panel)); }
+.outcome.denied { color: var(--warn-ink); background: color-mix(in srgb, var(--status-warning) 16%, var(--panel)); }
+.outcome.error, .outcome.failed { color: var(--error-ink); background: color-mix(in srgb, var(--status-critical) 10%, var(--panel)); }
+.tag.subtle { background: var(--panel-2); color: var(--text-2); }
+@media (max-width: 1100px) { .topbar-actions { flex-wrap: wrap; justify-content: flex-end; } }
+.crumb, .scope-picker span, .user-name { white-space: nowrap; }
+.scope-picker select { min-width: 180px; max-width: 280px; }
+
+.table-wrap { overflow-x: auto; }
+.nowrap { white-space: nowrap; }

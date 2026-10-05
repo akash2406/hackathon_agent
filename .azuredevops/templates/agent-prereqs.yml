@@ -22,8 +22,8 @@ steps:
           python)  need "$PYTHON_EXE" "Python 3.12+ is required for the backend tests" "--version" ;;
           node)    need node "Node.js 20.19+/22 is required for the UI build" "--version"
                    need npm "npm is required for the frontend build" "--version" ;;
-          docker)  need docker "Docker is required to build and push images" "--version" ;;
-          az)      need az "Azure CLI is required for ACR login and deployment" "version --output tsv" ;;
+          docker)  need docker "Docker is required for this step" "--version" ;;
+          az)      need az "Azure CLI is required for deployment" "version --output tsv" ;;
           *)       echo "##vso[task.logissue type=error]Unknown prerequisite '$tool'"; failed=1 ;;
         esac
       done

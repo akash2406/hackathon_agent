@@ -23,10 +23,9 @@ az deployment group create -g rg-crip-team1 -n crip-appservice \
   --query properties.outputs
 ```
 
-Creates: **user-assigned managed identity**, **ACR** (Basic, no admin user) with **AcrPull** for the
-identity, **Log Analytics + Application Insights**, a **Linux App Service plan** (B1 default) and the
+Creates: **user-assigned managed identity**, **Log Analytics + Application Insights**, a **Linux App Service plan** (B1 default) and the
 **web app** (HTTPS only, FTPS off, health check `/health`, persistent `/home` for the SQLite store).
-Note the outputs `webAppUrl`, `acrName`, `managedIdentityPrincipalId`.
+Note the outputs `webAppUrl`, `webAppName`, `managedIdentityPrincipalId`.
 
 ## Step 2: Entra app registration (one registration = SPA + API)
 
@@ -39,10 +38,10 @@ The script (idempotent; review it before running):
 
 - exposes the API scope `api://<appId>/access_as_user` (v2 tokens);
 - adds SPA redirect URIs for the web app URL and localhost;
-- adds the delegated permission **Azure Service Management / user_impersonation** and grants admin
-  consent. This is what lets the app call Azure **on behalf of** the user;
-- adds a **federated identity credential trusting the web app's managed identity**, so the OBO
-  exchange needs **no client secret** (`CRIP_OBO_CREDENTIAL_MODE=managed_identity`).
+- creates the app roles **CRIP.PlatformAdmin**, **CRIP.CostReader**, **CRIP.Reader** and turns on
+  security-group claims;
+- only with `--obo` (per-user mode): adds Azure Service Management / user_impersonation with admin
+  consent and a federated credential trusting the web app's managed identity.
 
 Then re-run the Step 1 deployment with the real `apiClientId` (it only updates app settings).
 
@@ -50,6 +49,20 @@ Then re-run the Step 1 deployment with the real `apiClientId` (it only updates a
 > *Authentication* → add platform *Single-page application* with the URLs → *API permissions* → Azure
 > Service Management → `user_impersonation` → Grant admin consent → *Certificates & secrets* →
 > Federated credentials → scenario *Managed identity* → pick `<namePrefix>-id`.
+
+## Step 2b: Give CRIP read access to the estate (default `app_identity` mode)
+
+```bash
+bash scripts/grant-azure-access.sh --management-group <mg-id> --principal-id <managedIdentityPrincipalId>
+```
+
+Grants the identity **Reader**, **Cost Management Reader** and **Security Reader** on the management
+group, plus Microsoft Graph **Directory.Read.All** (names in the access review). It needs Owner/UAA on
+the management group and a Privileged Role Administrator for the Graph step. Then set Bicep parameter
+`managementGroupId` and, optionally, `platformAdminGroupIds` / `costReaderGroupIds` / `readerGroupIds`.
+Assign people to the app roles (`CRIP.PlatformAdmin`, `CRIP.CostReader`, `CRIP.Reader`) in
+Enterprise applications, or pass `--admin-group` / `--cost-group` to `setup-entra-app.sh`.
+Who sees what: [access-model.md](access-model.md).
 
 ## Step 3: Let the app use Foundry
 
@@ -63,15 +76,17 @@ The app uses this identity to create/update its four agents on startup
 (`CRIP_REGISTER_AGENTS_ON_STARTUP=true`) and to run them. It is **not** used to read any Azure cost
 or resource data.
 
-## Step 4: Build and deploy the image
+## Step 4: Deploy the code
 
-Either the pipeline ([pipeline.md](pipeline.md)), or by hand:
+Either the pipeline ([pipeline.md](pipeline.md)), or by hand (Git Bash, WSL, Linux or macOS):
 
 ```bash
-az acr build -r <acrName> -t crip:latest .          # builds in Azure, no local Docker needed
-# or: docker build -t <acrName>.azurecr.io/crip:latest . && az acr login -n <acrName> && docker push <acrName>.azurecr.io/crip:latest
-az webapp restart -g rg-crip-team1 -n <webAppName>
+bash scripts/deploy-appservice.sh --resource-group rg-crip-team1
 ```
+
+It builds the UI, zips it with the API and the agent definitions (`scripts/build_package.py`),
+uploads the zip with `az webapp deploy`, lets App Service install `requirements.txt` (Oryx build) and
+smoke-tests the site. The web app runs Python 3.12 with the startup command from the Bicep template.
 
 Open `<webAppUrl>`, sign in, ask *"Give me a cost overview"*.
 
@@ -79,7 +94,10 @@ Open `<webAppUrl>`, sign in, ask *"Give me a cost overview"*.
 
 | Setting | Meaning |
 |---|---|
-| `WEBSITES_PORT=8000` | the container listens on 8000 |
+| `WEBSITES_PORT=8000` | the app listens on 8000 (startup command `python -m uvicorn --app-dir backend ...`) |
+| `SCM_DO_BUILD_DURING_DEPLOYMENT=true` | App Service installs `requirements.txt` from the zip on each deployment |
+| `CRIP_SQLITE_PATH=/home/data/crip.db` | SQLite on App Service persistent storage |
+| `CRIP_UI_DEMO_MODE` | `true` only for a temporary sample-data preview (Bicep `uiDemoMode`) |
 | `WEBSITES_ENABLE_APP_SERVICE_STORAGE=true` | persistent `/home` (SQLite at `/home/data/crip.db`) |
 | `AZURE_CLIENT_ID` | the user-assigned managed identity (Foundry + OBO client assertion) |
 | `APPLICATIONINSIGHTS_CONNECTION_STRING` | telemetry |
@@ -90,13 +108,14 @@ Open `<webAppUrl>`, sign in, ask *"Give me a cost overview"*.
 | `CRIP_FOUNDRY_PROJECT_ENDPOINT`, `CRIP_FOUNDRY_MODEL_DEPLOYMENT`, `CRIP_REGISTER_AGENTS_ON_STARTUP` | Foundry |
 
 Any secret is read by name: env var `CRIP_SECRET_<NAME>` (App Service Key Vault reference) or file
-`.secrets/<name>` locally. No secret value is ever in code, the image, Bicep or pipeline files.
+`.secrets/<name>` locally. No secret value is ever in code, the package, Bicep or pipeline files.
 
 ## Troubleshooting
 
 | Symptom | Cause / fix |
 |---|---|
-| Container keeps restarting, logs show image pull errors | Image not pushed yet, or AcrPull missing. Check `az acr repository list -n <acr>` |
+| Site shows the default App Service page | No code deployed yet: run `scripts/deploy-appservice.sh` |
+| App fails to start, log shows `No module named ...` | Packages not installed: `SCM_DO_BUILD_DURING_DEPLOYMENT` must be `true` (Bicep sets it); redeploy |
 | Chat returns 502 "Agent 'crip-orchestrator' is not registered" | Missing *Azure AI User* role on Foundry, or wrong model deployment. App logs (Log stream) show the registration error |
 | Answers say "could not obtain a delegated Azure token (AADSTS65001)" | Admin consent for Azure Service Management not granted |
 | "...(AADSTS70021 / 700213) federated credential..." | FIC subject must be the managed identity's **principal (object) id**; issuer `https://login.microsoftonline.com/<tenant>/v2.0` |

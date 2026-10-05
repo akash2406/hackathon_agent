@@ -10,9 +10,10 @@ exactly like a session id that does not exist.
 from __future__ import annotations
 
 import uuid
+from collections import defaultdict
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Protocol
+from typing import Any, Protocol
 from uuid import UUID
 
 import asyncpg
@@ -37,6 +38,47 @@ class MessageRecord:
     created_at: datetime
 
 
+@dataclass(frozen=True)
+class AccessEvent:
+    """One request to CRIP, for the platform admins' usage log."""
+
+    user_oid: str
+    user_name: str | None
+    action: str  # "chat", "tool:<name>", "me", "admin:<page>"
+    scope: str | None
+    outcome: str  # ok / partial / no_data / error / denied / failed
+    latency_ms: int | None = None
+    correlation_id: str | None = None
+    detail: str | None = None  # e.g. the question (truncated)
+
+
+def summarize_usage(rows: list[dict[str, Any]], limit: int) -> dict[str, Any]:
+    """Shared by every store: aggregate access-log rows (newest first) into the usage report."""
+    users: dict[str, int] = defaultdict(int)
+    actions: dict[str, int] = defaultdict(int)
+    scopes: dict[str, int] = defaultdict(int)
+    denied = 0
+    for r in rows:
+        users[r["user_name"] or r["user_oid"]] += 1
+        # Dashboard calls are logged per tool ("tool:<name>"); group them for the summary.
+        actions["dashboard" if r["action"].startswith("tool:") else r["action"]] += 1
+        if r["scope"]:
+            scopes[r["scope"]] += 1
+        denied += r["outcome"] == "denied"
+    top = lambda d: [{"name": k, "events": v} for k, v in sorted(d.items(), key=lambda kv: kv[1], reverse=True)[:10]]  # noqa: E731
+    return {
+        "total_events": len(rows),
+        "distinct_users": len(users),
+        "denied": denied,
+        "top_users": [{"user": u["name"], "events": u["events"]} for u in top(users)],
+        "by_action": top(actions),
+        "by_scope": top(scopes),
+        "events": [
+            {k: (v.isoformat() if isinstance(v, datetime) else v) for k, v in r.items() if k != "user_oid"} for r in rows[:limit]
+        ],
+    }
+
+
 class ChatRepository(Protocol):
     async def create_session(self, *, owner_oid: str, tenant_id: str, title: str) -> SessionRecord: ...
     async def get_session(self, session_id: UUID, *, owner_oid: str) -> SessionRecord | None: ...
@@ -53,6 +95,8 @@ class ChatRepository(Protocol):
         contributions: list[ToolContribution] | None = None,
     ) -> MessageRecord: ...
     async def ping(self) -> None: ...
+    async def log_access(self, event: AccessEvent) -> None: ...
+    async def usage(self, *, since: datetime, limit: int = 100) -> dict[str, Any]: ...
 
 
 class PostgresChatRepository:
@@ -149,6 +193,24 @@ class PostgresChatRepository:
     async def ping(self) -> None:
         async with self._guard() as conn:
             await conn.fetchval("SELECT 1")
+
+    async def log_access(self, event: AccessEvent) -> None:
+        async with self._guard() as conn:
+            await conn.execute(
+                "INSERT INTO access_log (id, user_oid, user_name, action, scope, outcome, latency_ms, correlation_id, detail) "
+                "VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)",
+                uuid.uuid4(), event.user_oid, event.user_name, event.action, event.scope, event.outcome,
+                event.latency_ms, event.correlation_id, (event.detail or "")[:300] or None,
+            )
+
+    async def usage(self, *, since: datetime, limit: int = 100) -> dict[str, Any]:
+        async with self._guard() as conn:
+            rows = await conn.fetch(
+                "SELECT at, user_oid, user_name, action, scope, outcome, latency_ms, detail FROM access_log "
+                "WHERE at >= $1 ORDER BY at DESC LIMIT 5000",
+                since,
+            )
+        return summarize_usage([dict(r) for r in rows], limit)
 
     def _guard(self) -> _PoolGuard:
         return _PoolGuard(self._pool)

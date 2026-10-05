@@ -54,3 +54,18 @@ CREATE TABLE IF NOT EXISTS agent_invocations (
     )
 );
 CREATE INDEX IF NOT EXISTS ix_agent_invocations_message ON agent_invocations (message_id);
+
+-- Every request to CRIP (chat, dashboard tool calls, denials): the platform admins' usage log.
+CREATE TABLE IF NOT EXISTS access_log (
+    id              UUID PRIMARY KEY,
+    at              TIMESTAMPTZ NOT NULL DEFAULT now(),
+    user_oid        TEXT        NOT NULL,
+    user_name       TEXT,
+    action          TEXT        NOT NULL,
+    scope           TEXT,
+    outcome         TEXT        NOT NULL,
+    latency_ms      INTEGER,
+    correlation_id  TEXT,
+    detail          TEXT
+);
+CREATE INDEX IF NOT EXISTS ix_access_log_at ON access_log (at DESC);

@@ -7,8 +7,6 @@ variables:
   agentPoolName: ""
   pythonExecutable: python3
 
-  # Image name inside ACR: <acr>.azurecr.io/<imageRepository>:<build id>
-  imageRepository: crip
   # Name of the Bicep deployment the pipeline creates / reads outputs from.
   deploymentName: crip-appservice
 

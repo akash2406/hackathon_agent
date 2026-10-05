@@ -4,11 +4,12 @@ import { Icon } from "../components/Icon";
 import { DataCard, Kpi, PageHeader } from "../components/ui";
 import { askLater } from "./Ask";
 import { useApp, useTool } from "../state";
+import PostureOverview from "./PostureOverview";
 
 const money = (m: Record<string, number> | undefined) =>
   Object.entries(m ?? {}).map(([c, v]) => formatMoney(v, c)).join(" + ") || "n/a";
 
-export default function Overview() {
+function CostOverview() {
   const { navigate } = useApp();
   const [mtd, retryMtd] = useTool("costpulse_query_costs", { group_by: "resource_group", timeframe: "month_to_date", top_n: 6 });
   const [forecast] = useTool("costpulse_forecast_month_end");
@@ -104,4 +105,10 @@ export default function Overview() {
       </div>
     </>
   );
+}
+
+/** Cost overview for users with cost access; posture overview for resource-level (Reader) access. */
+export default function Overview() {
+  const { level } = useApp();
+  return level === "resources" ? <PostureOverview /> : <CostOverview />;
 }

@@ -89,10 +89,12 @@ class Source(BaseModel):
     api: str = Field(min_length=1, description="HTTP method + URL of the Azure API called")
     invoked_at: AwareDatetime
     scope: str = Field(min_length=1, description="Azure RBAC scope actually queried")
-    # Literal, not str: a Source can only describe a call made with the signed-in
-    # user's delegated (OBO) token. A platform-identity call cannot be cited as
-    # grounding because it would not reflect what *this user* is allowed to see.
-    auth: Literal["user_obo"] = "user_obo"
+    # Which identity made the call: the user's own delegated token (user_obo), or
+    # CRIP's managed identity after CRIP checked the user's access (app_identity).
+    # Stamped centrally by tools.registry.execute_tool, never by individual tools.
+    auth: Literal["user_obo", "app_identity"] = "user_obo"
+    # Why this user was allowed to see it, e.g. "rbac:Reader" or "app-role:CRIP.PlatformAdmin".
+    authorized_via: str | None = None
     request_id: str | None = Field(default=None, description="x-ms-request-id returned by Azure, for support tickets")
     http_status: int | None = None
 

@@ -165,6 +165,33 @@ class ArmClient:
             truncated=bool(nxt),
         )
 
+    async def long_running(self, method: str, url: str, token: str, *, body: Any = None, timeout_s: float = 90.0) -> ArmResult:
+        """Run an ARM long-running operation (202 + Location) to completion.
+
+        Used by diagnostic *actions* such as Network Watcher's IP flow verify and
+        a NIC's effective security rules: POSTs that change nothing but are
+        evaluated asynchronously by Azure. Polls the ``Location`` header
+        (only on the ARM host) until it returns the result.
+        """
+        api = f"{method} {url}"
+        invoked_at = self.clock()
+        response = await self._send(method, url, token, api=api, json=body)
+        request_id = response.headers.get("x-ms-request-id")
+        waited = 0.0
+        while response.status_code == 202:
+            location = response.headers.get("location")
+            if not location or not location.startswith(self.endpoint + "/"):
+                raise AzureApiError(None, "no_operation_location", "Azure accepted the request but gave no result location", request_id=request_id, api=api)
+            if waited >= timeout_s:
+                raise AzureApiError(None, "operation_timeout", f"Azure did not finish the operation within {int(timeout_s)}s", request_id=request_id, api=api)
+            delay = min(_retry_delay(response, 1), 10.0)
+            await self._sleep(delay)
+            waited += max(delay, 1.0)
+            response = await self._send("GET", location, token, api=api)
+        payload = response.json() if response.content else {}
+        return ArmResult(api=api, payload=payload, items=list(payload.get("value", [])) if isinstance(payload, dict) else [],
+                         invoked_at=invoked_at, request_id=request_id, http_status=response.status_code)
+
     async def _send(self, method: str, url: str, token: str, *, api: str, json: Any = None) -> httpx.Response:
         headers = {"Authorization": f"Bearer {token}", "Accept": "application/json"}
         for attempt in range(self._max_retries + 1):

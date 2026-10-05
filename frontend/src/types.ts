@@ -62,3 +62,36 @@ export interface AgentCapability {
 export interface Capabilities {
   agents: AgentCapability[];
 }
+
+export type AccessLevel = "resources" | "cost";
+
+export interface SubscriptionAccess {
+  subscription_id: string;
+  display_name: string;
+  level: AccessLevel;
+  via: string[];
+}
+
+export interface Me {
+  user: { object_id: string; name: string | null; username: string | null };
+  access_mode: string;
+  is_platform_admin: boolean;
+  global_level: string;
+  global_via: string[];
+  subscriptions: SubscriptionAccess[];
+  resolved_at: string;
+  warnings: string[];
+}
+
+export interface UsageReport {
+  days: number;
+  total_events: number;
+  distinct_users: number;
+  denied: number;
+  top_users: { user: string; events: number }[];
+  by_action: { name: string; events: number }[];
+  by_scope: { name: string; events: number }[];
+  events: { at: string; user_name: string | null; action: string; scope: string | null; outcome: string; latency_ms: number | null; detail: string | null }[];
+}
+
+export type AdminSettings = Record<string, unknown>;

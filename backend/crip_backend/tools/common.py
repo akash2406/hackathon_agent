@@ -10,6 +10,8 @@ from __future__ import annotations
 from datetime import UTC, date, datetime
 from typing import Any
 
+from azure.core.exceptions import AzureError
+
 from ..auth.obo import NotDelegatedTokenError, OboExchangeError
 from ..azure_clients.arm import ArmResult, AzureApiError
 from ..contracts import AgentResponse, Confidence, ResponseStatus, Source
@@ -23,18 +25,21 @@ COST_LATENCY_CAVEAT = "Azure Cost Management data typically lags 8-24 hours behi
 
 
 async def user_token(ctx: ToolContext, *, agent: str, query_used: str | None = None) -> str | AgentResponse:
-    """The user's OBO token, or an ``error`` response explaining why there is none (no Azure call is made)."""
+    """The token for Azure data calls, or an ``error`` response explaining why there is none (no Azure call is made)."""
     try:
         return await ctx.arm_token()
     except (OboExchangeError, NotDelegatedTokenError) as exc:
-        return AgentResponse(
-            agent=agent,
-            status=ResponseStatus.ERROR,
-            answer=f"I could not obtain a delegated Azure token for you, so no data was retrieved ({exc}).",
-            confidence=LOW,
-            query_used=query_used,
-            caveats=["No Azure call was made; nothing in this answer comes from Azure data."],
-        )
+        reason = f"I could not obtain a delegated Azure token for you, so no data was retrieved ({exc})."
+    except AzureError as exc:  # app_identity mode: managed identity unavailable / not authorised
+        reason = f"CRIP's identity could not obtain an Azure token, so no data was retrieved ({type(exc).__name__}: {exc})."
+    return AgentResponse(
+        agent=agent,
+        status=ResponseStatus.ERROR,
+        answer=reason,
+        confidence=LOW,
+        query_used=query_used,
+        caveats=["No Azure call was made; nothing in this answer comes from Azure data."],
+    )
 
 
 def source(result: ArmResult, *, tool: str, scope: str) -> Source:

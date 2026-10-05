@@ -36,8 +36,12 @@ function followUpsFor(response: ChatResponse, asked: string, capabilities: Agent
 }
 
 export default function Ask() {
-  const { api } = useApp();
-  const [capabilities, setCapabilities] = useState<AgentCapability[]>([]);
+  const { api, isAdmin, level } = useApp();
+  const [allCapabilities, setCapabilities] = useState<AgentCapability[]>([]);
+  // Suggest only what this user can actually get answers for (the backend enforces it anyway).
+  const capabilities = allCapabilities.filter(
+    (a) => (a.key !== "platform" || isAdmin) && (level === "cost" || !["costpulse", "optimizer"].includes(a.key)),
+  );
   const [entries, setEntries] = useState<Entry[]>([]);
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [draft, setDraft] = useState("");

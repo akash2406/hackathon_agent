@@ -16,7 +16,7 @@ import {
   type IPublicClientApplication,
 } from "@azure/msal-browser";
 import { apiTokenRequest, config } from "./config";
-import type { AgentResponse, Capabilities, ChatResponse, ErrorEnvelope } from "./types";
+import type { AdminSettings, AgentResponse, Capabilities, ChatResponse, ErrorEnvelope, Me, UsageReport } from "./types";
 
 export class ApiFailure extends Error {
   constructor(
@@ -31,9 +31,14 @@ export class ApiFailure extends Error {
 
 export interface Api {
   readonly demo: boolean;
+  me(): Promise<Me>;
   callTool(name: string, args: Record<string, unknown>): Promise<AgentResponse>;
   chat(message: string, sessionId: string | null): Promise<ChatResponse>;
+  adminUsage(days: number): Promise<UsageReport>;
+  adminSettings(): Promise<AdminSettings>;
 }
+
+export type DemoPersona = "admin" | "cost" | "reader";
 
 async function accessToken(msal: IPublicClientApplication, account: AccountInfo): Promise<string> {
   try {
@@ -62,37 +67,43 @@ async function failureFrom(response: Response): Promise<ApiFailure> {
 }
 
 export function liveApi(msal: IPublicClientApplication, account: AccountInfo): Api {
-  async function post<T>(path: string, body: unknown): Promise<T> {
+  async function send<T>(method: "GET" | "POST", path: string, body?: unknown): Promise<T> {
     const token = await accessToken(msal, account);
     const response = await fetch(`${config.apiBaseUrl}${path}`, {
-      method: "POST",
+      method,
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-      body: JSON.stringify(body),
+      body: body === undefined ? undefined : JSON.stringify(body),
     });
     if (!response.ok) throw await failureFrom(response);
     return (await response.json()) as T;
   }
   return {
     demo: false,
-    callTool: (name, args) => post<AgentResponse>(`/api/tools/${encodeURIComponent(name)}`, args),
-    chat: (message, sessionId) => post<ChatResponse>("/api/chat", { message, session_id: sessionId }),
+    me: () => send<Me>("GET", "/api/me"),
+    callTool: (name, args) => send<AgentResponse>("POST", `/api/tools/${encodeURIComponent(name)}`, args),
+    chat: (message, sessionId) => send<ChatResponse>("POST", "/api/chat", { message, session_id: sessionId }),
+    adminUsage: (days) => send<UsageReport>("GET", `/api/admin/usage?days=${days}`),
+    adminSettings: () => send<AdminSettings>("GET", "/api/admin/settings"),
   };
 }
 
-export function demoApi(): Api {
+export function demoApi(persona: DemoPersona): Api {
   // Lazy import keeps the sample data out of the main bundle for real users.
   const load = () => import("./demo/sample");
   const delay = (ms: number) => new Promise((r) => setTimeout(r, ms));
   return {
     demo: true,
+    me: async () => (await load()).sampleMe(persona),
     callTool: async (name, args) => {
       await delay(350 + Math.random() * 400);
-      return (await load()).sampleTool(name, args);
+      return (await load()).sampleTool(name, args, persona);
     },
     chat: async (message) => {
       await delay(1600);
-      return (await load()).sampleChat(message);
+      return (await load()).sampleChat(message, persona);
     },
+    adminUsage: async (days) => (await load()).sampleUsage(days),
+    adminSettings: async () => (await load()).sampleSettings(),
   };
 }
 

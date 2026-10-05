@@ -11,7 +11,7 @@
 # Proves without any Azure access: the image builds; it runs as non-root; the
 # UI, /config.js and SPA routing are served by the same container as the API;
 # unauthenticated chat gets the typed 401 envelope; the SQLite store and its
-# grounding CHECK constraint are created; all three domain agents are exposed;
+# grounding CHECK constraint are created; all domain agents are exposed;
 # agent registration payloads render from inside the image.
 #
 # Cannot prove locally: a real answer. That needs Entra sign-in, Foundry and
@@ -82,7 +82,7 @@ check "security headers present" bash -c "curl -sSI $BASE/ | grep -qi '^x-conten
 
 # API
 code="$(fetch caps.json "$BASE/api/capabilities")"
-check "GET /api/capabilities lists costpulse, optimizer, inventory" bash -c "[ $code = 200 ] && grep -q costpulse .local/caps.json && grep -q optimizer .local/caps.json && grep -q inventory .local/caps.json"
+check "GET /api/capabilities lists all 6 domain agents" bash -c "[ $code = 200 ] && for a in costpulse optimizer inventory governance netdiag platform; do grep -q \$a .local/caps.json || exit 1; done"
 code="$(fetch chat-unauth.json -X POST -H 'Content-Type: application/json' -d '{"message":"ping"}' "$BASE/api/chat")"
 check "POST /api/chat without token -> 401 envelope" bash -c "[ $code = 401 ] && grep -q '\"unauthenticated\"' .local/chat-unauth.json && grep -q correlation_id .local/chat-unauth.json"
 code="$(fetch chat-bad.json -X POST -H 'Authorization: Bearer forged.token.value' -H 'Content-Type: application/json' -d '{"message":"ping"}' "$BASE/api/chat")"
@@ -94,12 +94,12 @@ check "unknown /api path -> 404 envelope, not HTML" bash -c "[ $code = 404 ] && 
 
 # Persistence (SQLite in the container's /home/data volume)
 tables="$(compose exec -T app python -c "import sqlite3; c=sqlite3.connect('/home/data/crip.db'); print(','.join(r[0] for r in c.execute(\"select name from sqlite_master where type='table' order by name\")))" | tr -d '\r' || true)"
-check "SQLite schema applied ($tables)" test "$tables" = "agent_invocations,messages,sessions"
+check "SQLite schema applied ($tables)" test "$tables" = "access_log,agent_invocations,messages,sessions"
 check "grounding CHECK constraint present" bash -c "compose(){ \"$DOCKER\" compose \"\$@\"; }; compose exec -T app python -c \"import sqlite3; s=sqlite3.connect('/home/data/crip.db').execute(\\\"select sql from sqlite_master where name='agent_invocations'\\\").fetchone()[0]; assert 'grounded_rows_have_provenance' in s\""
 
 # Foundry registration payloads (no Azure call with --dry-run)
 agents="$(compose exec -T app python /app/foundry/register_agents.py --dry-run | tr -d '\r' | grep -c '"name": "crip-' || true)"
-check "register_agents --dry-run renders 4 agents from the image" test "$agents" -eq 4
+check "register_agents --dry-run renders 7 agents from the image" test "$agents" -eq 7
 
 step "Result"
 echo "passed: $PASS   failed: $FAIL   (mode: $MODE)"

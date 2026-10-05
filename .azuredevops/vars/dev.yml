@@ -3,8 +3,8 @@
 
 variables:
   # Azure Resource Manager service connection (Project settings -> Service connections).
-  # Needs Contributor on the resource group; to run the Bicep stage it also needs
-  # permission to create role assignments (Owner, or Role Based Access Control Administrator).
+  # Needs Contributor on the resource group (enough for the Bicep stage too: the
+  # template creates no role assignments).
   azureServiceConnection: "<arm-service-connection-name>"
 
   resourceGroup: "<rg-crip-dev>"
@@ -16,7 +16,14 @@ variables:
   # Entra app registration (scripts/setup-entra-app.sh prints this).
   apiClientId: "<app-registration-client-id>"
   spaClientId: ""                     # only if the SPA has its own registration
-  # managed_identity (recommended, no secret) or client_secret (+ oboClientSecretKeyVaultUri).
+  # Access model (docs/access-model.md): app_identity (CRIP's identity reads Azure, CRIP checks
+  # each user's RBAC / app roles / groups) or user_obo (every call as the user).
+  azureAccessMode: "app_identity"
+  managementGroupId: "<management-group-id>"
+  platformAdminGroupIds: ""            # optional Entra group object ids, comma-separated
+  costReaderGroupIds: ""
+  readerGroupIds: ""
+  # user_obo mode only: managed_identity (no secret) or client_secret (+ oboClientSecretKeyVaultUri).
   oboCredentialMode: "managed_identity"
   oboClientSecretKeyVaultUri: ""
 
@@ -24,6 +31,9 @@ variables:
   foundryProjectEndpoint: "https://<resource>.services.ai.azure.com/api/projects/<project>"
   foundryModelDeployment: "gpt-4o"
 
-  # Optional overrides. Leave empty to read them from the Bicep deployment outputs.
-  acrName: ""
+  # TEMPORARY: "true" serves the UI with labelled SAMPLE data and no sign-in, so the site can be
+  # deployed before the app registration exists. Set "false" once apiClientId is real.
+  uiDemoMode: "false"
+
+  # Optional override. Leave empty to read it from the Bicep deployment outputs.
   webAppName: ""

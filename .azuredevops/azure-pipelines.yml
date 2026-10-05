@@ -1,10 +1,10 @@
 # CRIP CI/CD -> Azure App Service (one container image: UI + API).
 #
 #   Build      tests, UI build, secret scan                           (every PR and push)
-#   Provision  Bicep: identity, ACR, App Insights, plan, web app      (only when provisionInfra=true)
-#   Package    docker build, push to ACR as :<build id> and :latest   (not for PRs)
+#   Provision  Bicep: identity, App Insights, plan, Python web app      (only when provisionInfra=true)
+#   Package    zip: API + agent definitions + built UI (artifact)      (not for PRs)
 #   Approve    manual gate                                            (prod only)
-#   Deploy     point the web app at the new image, smoke-test the URL
+#   Deploy     scripts/deploy-appservice.sh: zip deploy, smoke-test the URL
 #
 # Settings live in committed variable files (identifiers only, no secrets):
 #   .azuredevops/vars/common.yml, .azuredevops/vars/<env>.yml
@@ -37,8 +37,6 @@ pr:
 variables:
   - template: vars/common.yml
   - template: vars/${{ parameters.targetEnvironment }}.yml
-  - name: imageTag
-    value: $(Build.BuildId)
 
 # Microsoft-hosted Ubuntu unless a self-hosted pool is named in the variable files.
 pool:
@@ -125,40 +123,37 @@ stages:
                       -f infra/appservice/main.bicep \
                       -p namePrefix="$(namePrefix)" apiClientId="$(apiClientId)" spaClientId="$(spaClientId)" \
                          foundryProjectEndpoint="$(foundryProjectEndpoint)" foundryModelDeployment="$(foundryModelDeployment)" \
+                         azureAccessMode="$(azureAccessMode)" managementGroupId="$(managementGroupId)" \
+                         platformAdminGroupIds="$(platformAdminGroupIds)" costReaderGroupIds="$(costReaderGroupIds)" readerGroupIds="$(readerGroupIds)" \
                          oboCredentialMode="$(oboCredentialMode)" oboClientSecretKeyVaultUri="$(oboClientSecretKeyVaultUri)" \
-                         appServiceSku="$(appServiceSku)" \
+                         appServiceSku="$(appServiceSku)" uiDemoMode="$(uiDemoMode)" \
                       --query properties.outputs -o json
 
   # ---------------------------------------------------------------------------
   - stage: Package
-    displayName: Build + push image (${{ parameters.targetEnvironment }})
+    displayName: Build code package (${{ parameters.targetEnvironment }})
     ${{ if eq(parameters.provisionInfra, true) }}:
       dependsOn: Provision
     ${{ else }}:
       dependsOn: Build
     condition: and(succeeded(), ne(variables['Build.Reason'], 'PullRequest'))
     jobs:
-      - job: image
+      - job: package
         steps:
+          - ${{ if eq(variables.agentPoolName, '') }}:
+              - task: UsePythonVersion@0
+                inputs: { versionSpec: "3.12" }
+              - task: NodeTool@0
+                inputs: { versionSpec: "22.x" }
           - template: templates/agent-prereqs.yml
-            parameters: { tools: [docker, az] }
-          - template: templates/resolve-names.yml
-          - task: AzureCLI@2
-            displayName: docker build + push to ACR
-            inputs:
-              azureSubscription: ${{ variables.azureServiceConnection }}
-              scriptType: bash
-              scriptLocation: inlineScript
-              inlineScript: |
-                set -euo pipefail
-                export DOCKER_BUILDKIT=1
-                az acr login --name "$(acrName)"
-                image="$(acrLoginServer)/$(imageRepository)"
-                docker build -t "$image:$(imageTag)" -t "$image:latest" \
-                  --label org.opencontainers.image.revision="$(Build.SourceVersion)" .
-                docker push "$image:$(imageTag)"
-                docker push "$image:latest"
-                docker image rm -f "$image:$(imageTag)" "$image:latest" > /dev/null || true
+            parameters: { tools: [python, node] }
+          - bash: |
+              set -euo pipefail
+              "$(pythonExecutable)" scripts/build_package.py --out "$(Build.ArtifactStagingDirectory)/crip-app.zip"
+            displayName: Build zip (API + agent definitions + built UI)
+          - publish: $(Build.ArtifactStagingDirectory)/crip-app.zip
+            artifact: app
+            displayName: Publish package artifact
 
   # ---------------------------------------------------------------------------
   - ${{ if eq(parameters.deploy, true) }}:
@@ -177,7 +172,7 @@ stages:
                     inputs:
                       notifyUsers: $(approvers)
                       approvers: $(approvers)
-                      instructions: Approve deployment of CRIP image $(imageTag) to prod.
+                      instructions: Approve deployment of CRIP build $(Build.BuildNumber) to prod.
                       onTimeout: reject
 
       - stage: Deploy
@@ -195,28 +190,19 @@ stages:
                 deploy:
                   steps:
                     - checkout: self
+                    - download: current
+                      artifact: app
                     - template: templates/agent-prereqs.yml
-                      parameters: { tools: [az] }
+                      parameters: { tools: [python, az] }
                     - template: templates/resolve-names.yml
-                    - task: AzureWebAppContainer@1
-                      displayName: Point web app at $(imageRepository):$(imageTag)
+                    - task: AzureCLI@2
+                      displayName: Deploy code + smoke test (scripts/deploy-appservice.sh)
                       inputs:
                         azureSubscription: ${{ variables.azureServiceConnection }}
-                        appName: $(webAppName)
-                        resourceGroupName: $(resourceGroup)
-                        containers: $(acrLoginServer)/$(imageRepository):$(imageTag)
-                    - bash: |
-                        set -uo pipefail
-                        url="$(webAppUrl)"
-                        echo "Waiting for $url to serve the new image (container pull + start can take a few minutes)..."
-                        for i in $(seq 1 40); do
-                          if curl -fsS --max-time 10 "$url/health/live" > /dev/null; then break; fi
-                          sleep 15
-                        done
-                        curl -fsS --max-time 10 "$url/health" || { echo "##vso[task.logissue type=error]$url/health is not OK"; exit 1; }
-                        code=$(curl -sS -o /tmp/chat.json -w '%{http_code}' -X POST -H 'Content-Type: application/json' -d '{"message":"ping"}' "$url/api/chat")
-                        grep -q '"unauthenticated"' /tmp/chat.json && [ "$code" = 401 ] \
-                          || { echo "##vso[task.logissue type=error]expected 401 envelope from /api/chat, got $code"; exit 1; }
-                        curl -fsS "$url/" | grep -q 'id="root"' || { echo "##vso[task.logissue type=error]UI not served at $url/"; exit 1; }
-                        echo "CRIP is live at $url"
-                      displayName: Smoke test the live app
+                        scriptType: bash
+                        scriptLocation: inlineScript
+                        inlineScript: |
+                          set -euo pipefail
+                          PYTHON="$(pythonExecutable)" bash scripts/deploy-appservice.sh \
+                            --resource-group "$(resourceGroup)" --name "$(webAppName)" \
+                            --package "$(Pipeline.Workspace)/app/crip-app.zip"

@@ -576,6 +576,15 @@ async def list_subscriptions(args: ListSubscriptionsArgs, ctx: ToolContext) -> A
         {"subscription_id": s.get("subscriptionId"), "display_name": s.get("displayName"), "state": s.get("state")}
         for s in result.items
     ]
+    if ctx.access is not None:
+        # In app_identity mode Azure lists everything CRIP's identity can read:
+        # only show what this user is allowed to see, and at which level.
+        allowed = ctx.access.subscriptions
+        subs = [
+            {**s, "access": allowed[str(s["subscription_id"]).lower()].level.name.lower()}
+            for s in subs
+            if str(s["subscription_id"]).lower() in allowed
+        ]
     if not subs:
         return AgentResponse(
             agent=AGENT,

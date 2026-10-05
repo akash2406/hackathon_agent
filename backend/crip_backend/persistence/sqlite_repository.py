@@ -26,7 +26,7 @@ import aiosqlite
 from ..contracts import ResponseStatus
 from ..errors import PersistenceError
 from ..tools.context import ToolContribution
-from .repository import MessageRecord, SessionRecord
+from .repository import AccessEvent, MessageRecord, SessionRecord, summarize_usage
 
 log = logging.getLogger(__name__)
 
@@ -146,6 +146,28 @@ class SqliteChatRepository:
             except sqlite3.Error as exc:
                 raise PersistenceError(str(exc)) from exc
         return MessageRecord(id=message_id, session_id=session_id, seq=seq, created_at=_parse(created_at))
+
+    async def log_access(self, event: AccessEvent) -> None:
+        await self._write(
+            "INSERT INTO access_log (id, at, user_oid, user_name, action, scope, outcome, latency_ms, correlation_id, detail) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (str(uuid.uuid4()), _now(), event.user_oid, event.user_name, event.action, event.scope, event.outcome,
+             event.latency_ms, event.correlation_id, (event.detail or "")[:300] or None),
+        )
+
+    async def usage(self, *, since: datetime, limit: int = 100) -> dict:
+        async with self._lock:
+            try:
+                async with self._conn.execute(
+                    "SELECT at, user_oid, user_name, action, scope, outcome, latency_ms, detail FROM access_log "
+                    "WHERE at >= ? ORDER BY at DESC LIMIT 5000",
+                    (since.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%S.%fZ"),),
+                ) as cur:
+                    rows = await cur.fetchall()
+            except sqlite3.Error as exc:
+                raise PersistenceError(str(exc)) from exc
+        keys = ("at", "user_oid", "user_name", "action", "scope", "outcome", "latency_ms", "detail")
+        return summarize_usage([dict(zip(keys, r, strict=True)) for r in rows], limit)
 
     async def ping(self) -> None:
         async with self._lock:

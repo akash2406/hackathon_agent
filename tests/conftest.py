@@ -29,7 +29,8 @@ from crip_backend.auth.obo import DelegatedToken
 from crip_backend.azure_clients.arm import ArmClient
 from crip_backend.config import Settings
 from crip_backend.contracts import ResponseStatus
-from crip_backend.persistence.repository import MessageRecord, SessionRecord
+from crip_backend.access.model import AccessLevel, SubscriptionAccess, UserAccess
+from crip_backend.persistence.repository import AccessEvent, MessageRecord, SessionRecord, summarize_usage
 from crip_backend.tools.context import ToolContext, ToolContribution
 
 TENANT = "11111111-1111-1111-1111-111111111111"
@@ -81,6 +82,13 @@ def user() -> AuthenticatedUser:
 
 class FakeTokenSource:
     """Stands in for OnBehalfOfTokenProvider; hands out a user-shaped delegated ARM token."""
+
+    kind = "user_obo"
+
+    async def token_for(self, *, session_id: UUID | None, user: AuthenticatedUser) -> str:
+        token = await self.get_token(session_id=session_id, user=user)
+        token.assert_belongs_to(user)
+        return token.access_token
 
     def __init__(self, token: str | None = None, error: Exception | None = None) -> None:
         self.token = token or make_arm_token()
@@ -250,6 +258,7 @@ class InMemoryRepository:
         self.sessions: dict[UUID, dict[str, Any]] = {}
         self.messages: list[dict[str, Any]] = []
         self.invocations: list[ToolContribution] = []
+        self.access_log: list[dict[str, Any]] = []
 
     async def create_session(self, *, owner_oid: str, tenant_id: str, title: str) -> SessionRecord:
         sid = uuid.uuid4()
@@ -287,3 +296,31 @@ class InMemoryRepository:
 
     async def ping(self) -> None:
         return None
+
+    async def log_access(self, event: AccessEvent) -> None:
+        self.access_log.insert(0, {"at": datetime.now(UTC), "user_oid": event.user_oid, "user_name": event.user_name,
+                                   "action": event.action, "scope": event.scope, "outcome": event.outcome,
+                                   "latency_ms": event.latency_ms, "detail": event.detail})
+
+    async def usage(self, *, since: datetime, limit: int = 100) -> dict[str, Any]:
+        return summarize_usage([r for r in self.access_log if r["at"] >= since], limit)
+
+
+def make_access(level: AccessLevel = AccessLevel.COST, *, admin: bool = False, via: str = "rbac:Owner",
+                subscriptions: tuple[str, ...] = (SUBSCRIPTION,)) -> UserAccess:
+    return UserAccess(
+        object_id=USER_OID,
+        is_platform_admin=admin,
+        global_level=AccessLevel.COST if admin else AccessLevel.NONE,
+        global_via=("app-role:CRIP.PlatformAdmin",) if admin else (),
+        subscriptions={s: SubscriptionAccess(s, f"Sub {s[:4]}", level, (via,)) for s in subscriptions},
+        resolved_at=datetime.now(UTC),
+    )
+
+
+class FakeAccessResolver:
+    def __init__(self, access: UserAccess | None = None) -> None:
+        self.access = access or make_access()
+
+    async def resolve(self, user: AuthenticatedUser) -> UserAccess:
+        return self.access

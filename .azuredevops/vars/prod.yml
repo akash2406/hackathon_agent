@@ -11,11 +11,18 @@ variables:
 
   apiClientId: "<app-registration-client-id>"
   spaClientId: ""
+  azureAccessMode: "app_identity"
+  managementGroupId: "<management-group-id>"
+  platformAdminGroupIds: ""
+  costReaderGroupIds: ""
+  readerGroupIds: ""
   oboCredentialMode: "managed_identity"
   oboClientSecretKeyVaultUri: ""
 
   foundryProjectEndpoint: "https://<resource>.services.ai.azure.com/api/projects/<project>"
   foundryModelDeployment: "gpt-4o"
 
-  acrName: ""
+  # Keep "false" in prod (sample-data preview without sign-in; see dev.yml).
+  uiDemoMode: "false"
+
   webAppName: ""

@@ -21,6 +21,8 @@ const AGENT_LABEL: Record<string, string> = {
   costpulse: "CostPulse · spend",
   optimizer: "Optimizer · savings",
   inventory: "Inventory · resources",
+  governance: "Governance · posture",
+  platform: "Platform · admin",
 };
 
 export const agentLabel = (key: string) => AGENT_LABEL[key] ?? key;

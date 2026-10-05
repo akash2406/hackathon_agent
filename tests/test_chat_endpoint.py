@@ -11,7 +11,7 @@ from crip_backend.errors import ApiError
 from crip_backend.main import create_app
 from crip_backend.services import Services
 
-from .conftest import OTHER_OID, REPO_ROOT, Fail, Final, InMemoryRepository, ScriptedAgentsClient, ToolCalls
+from .conftest import OTHER_OID, REPO_ROOT, Fail, FakeAccessResolver, Final, InMemoryRepository, ScriptedAgentsClient, ToolCalls
 from .test_orchestrator_routing import STUB_TOOLS, costpulse_policy
 
 
@@ -36,7 +36,7 @@ def repo():
     return InMemoryRepository()
 
 
-def make_app(settings, user, repo, token_source, arm_client, policies):
+def make_app(settings, user, repo, token_source, arm_client, policies, access=None):
     gateway = FoundryAgentGateway(ScriptedAgentsClient(policies), poll_interval_seconds=0)
     services = Services(
         settings=settings,
@@ -45,6 +45,7 @@ def make_app(settings, user, repo, token_source, arm_client, policies):
         arm=arm_client,
         conversation=ConversationService(gateway, load_definitions(REPO_ROOT / "foundry" / "definitions"), STUB_TOOLS),
         repository=repo,
+        access=access or FakeAccessResolver(),
     )
     return create_app(services=services)
 

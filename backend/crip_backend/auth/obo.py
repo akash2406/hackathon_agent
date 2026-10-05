@@ -75,6 +75,8 @@ class DelegatedToken:
 
 
 class OnBehalfOfTokenProvider:
+    kind = "user_obo"
+
     def __init__(
         self,
         settings: Settings,
@@ -126,6 +128,12 @@ class OnBehalfOfTokenProvider:
 
             self._mi_credential = ManagedIdentityCredential(client_id=client_id)
         return self._mi_credential.get_token(_FEDERATION_SCOPE).token
+
+    async def token_for(self, *, session_id: UUID | None, user: AuthenticatedUser) -> str:
+        """The user's delegated ARM token, re-verified to belong to them on every use."""
+        token = await self.get_token(session_id=session_id, user=user)
+        token.assert_belongs_to(user)
+        return token.access_token
 
     async def get_token(self, *, session_id: UUID | None, user: AuthenticatedUser) -> DelegatedToken:
         if session_id is None:

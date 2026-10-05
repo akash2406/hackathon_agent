@@ -1,13 +1,13 @@
-# Resolves acrName / acrLoginServer / webAppName / webAppUrl for later steps.
+# Resolves webAppName / webAppUrl for later steps.
 #
-# Uses explicit values from the variable file if set; otherwise reads the outputs
-# of the Bicep deployment (name $(deploymentName)) in $(resourceGroup). So it works
-# whether the infrastructure came from this pipeline, from a manual
+# Uses the explicit value from the variable file if set; otherwise reads the
+# outputs of the Bicep deployment (name $(deploymentName)) in $(resourceGroup).
+# So it works whether the infrastructure came from this pipeline, from a manual
 # `az deployment group create`, or was created by hand.
 
 steps:
   - task: AzureCLI@2
-    displayName: Resolve ACR + web app names
+    displayName: Resolve web app name
     inputs:
       azureSubscription: ${{ variables.azureServiceConnection }}
       scriptType: bash
@@ -15,18 +15,13 @@ steps:
       inlineScript: |
         set -euo pipefail
         literal() { [[ "$1" == '$('* || "$1" == *"<"*">"* ]] && echo "" || echo "$1"; }
-        acr="$(literal "$(acrName)")"; app="$(literal "$(webAppName)")"
-        if [ -z "$acr" ] || [ -z "$app" ]; then
-          outputs=$(az deployment group show -g "$(resourceGroup)" -n "$(deploymentName)" --query properties.outputs -o json) || {
-            echo "##vso[task.logissue type=error]No Bicep deployment '$(deploymentName)' in $(resourceGroup). Run with provisionInfra=true or set acrName/webAppName in the variable file."
+        app="$(literal "$(webAppName)")"
+        if [ -z "$app" ]; then
+          app=$(az deployment group show -g "$(resourceGroup)" -n "$(deploymentName)" --query properties.outputs.webAppName.value -o tsv) || {
+            echo "##vso[task.logissue type=error]No Bicep deployment '$(deploymentName)' in $(resourceGroup). Run with provisionInfra=true or set webAppName in the variable file."
             exit 1; }
-          [ -z "$acr" ] && acr=$(echo "$outputs" | python3 -c 'import json,sys; print(json.load(sys.stdin)["acrName"]["value"])')
-          [ -z "$app" ] && app=$(echo "$outputs" | python3 -c 'import json,sys; print(json.load(sys.stdin)["webAppName"]["value"])')
         fi
-        login=$(az acr show -n "$acr" --query loginServer -o tsv)
         host=$(az webapp show -g "$(resourceGroup)" -n "$app" --query defaultHostName -o tsv)
-        echo "ACR: $login   Web app: $app (https://$host)"
-        echo "##vso[task.setvariable variable=acrName]$acr"
-        echo "##vso[task.setvariable variable=acrLoginServer]$login"
+        echo "Web app: $app (https://$host)"
         echo "##vso[task.setvariable variable=webAppName]$app"
         echo "##vso[task.setvariable variable=webAppUrl]https://$host"

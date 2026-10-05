@@ -7,9 +7,10 @@ rather than constructing clients themselves.
 Credential boundaries are decided here and nowhere else:
 
 * ``DefaultAzureCredential`` (the App Service managed identity in Azure, your
-  ``az login`` locally) -> Foundry only (running and registering agents).
-* The OBO provider -> every Azure *data* call (Cost Management, Advisor,
-  Resource Graph) via ``ToolContext.arm_token``. These calls run as the user.
+  ``az login`` locally) -> Foundry (running and registering agents) and, in the
+  default ``app_identity`` access mode, Azure data reads and Microsoft Graph.
+  What each *user* may see is decided by ``AccessResolver`` before any read.
+* ``user_obo`` access mode -> Azure data calls run as the user (OBO provider).
 * Secret store (Key Vault references / local files) -> database URL, OBO client
   secret, App Insights connection string.
 """
@@ -28,12 +29,15 @@ from .agent_gateway.conversation import ConversationService
 from .agent_gateway.definitions import AgentDefinitions, load_definitions, verify_tool_coverage
 from .agent_gateway.foundry_gateway import FoundryAgentGateway
 from .auth.entra import EntraTokenValidator
+from .auth.app_identity import AppIdentityTokens
 from .auth.obo import OnBehalfOfTokenProvider
 from .azure_clients.arm import ArmClient
 from .config import Settings
 from .persistence.repository import ChatRepository
 from .secrets import SecretStore
-from .tools.context import DelegatedTokenSource
+from .access.graph import GraphClient
+from .access.resolver import AccessResolver
+from .tools.context import AzureDataTokens
 from .tools.registry import TOOLS
 
 log = logging.getLogger(__name__)
@@ -45,10 +49,12 @@ _REGISTRATION_TIMEOUT_SECONDS = 90
 class Services:
     settings: Settings
     token_validator: EntraTokenValidator
-    tokens: DelegatedTokenSource
+    tokens: AzureDataTokens  # how Azure data is read: app identity (default) or user OBO
     arm: ArmClient
     conversation: ConversationService
     repository: ChatRepository
+    access: AccessResolver  # who may see what
+    graph: GraphClient | None = None  # principal names / group membership (app_identity mode)
     agent_names: list[str] = field(default_factory=list)
     _resources: AsyncExitStack = field(default_factory=AsyncExitStack)
 
@@ -129,23 +135,36 @@ async def build_services(settings: Settings) -> Services:
             run_timeout_seconds=settings.foundry_run_timeout_seconds,
             poll_interval_seconds=settings.foundry_poll_interval_seconds,
         )
+        arm = ArmClient(
+            http,
+            arm_endpoint=settings.arm_endpoint,
+            cost_api_version=settings.cost_management_api_version,
+            subscriptions_api_version=settings.subscriptions_api_version,
+            advisor_api_version=settings.advisor_api_version,
+            resource_graph_api_version=settings.resource_graph_api_version,
+            metric_column=settings.cost_metric_column,
+            max_retries=settings.arm_max_retries,
+            max_pages=settings.arm_max_pages,
+        )
+        if settings.azure_access_mode == "user_obo":
+            obo = OnBehalfOfTokenProvider(settings, secrets)
+            data_tokens: Any = obo
+            graph = None
+            token_fn = lambda user: obo.token_for(session_id=None, user=user)  # noqa: E731
+        else:
+            app_tokens = AppIdentityTokens(platform_credential)
+            data_tokens = app_tokens
+            graph = GraphClient(http, app_tokens.graph, settings.graph_endpoint)
+            token_fn = lambda user: app_tokens.arm()  # noqa: E731
         services = Services(
             settings=settings,
             token_validator=EntraTokenValidator(settings),
-            tokens=OnBehalfOfTokenProvider(settings, secrets),
-            arm=ArmClient(
-                http,
-                arm_endpoint=settings.arm_endpoint,
-                cost_api_version=settings.cost_management_api_version,
-                subscriptions_api_version=settings.subscriptions_api_version,
-                advisor_api_version=settings.advisor_api_version,
-                resource_graph_api_version=settings.resource_graph_api_version,
-                metric_column=settings.cost_metric_column,
-                max_retries=settings.arm_max_retries,
-                max_pages=settings.arm_max_pages,
-            ),
+            tokens=data_tokens,
+            arm=arm,
             conversation=ConversationService(gateway, definitions),
             repository=repository,
+            access=AccessResolver(settings, arm, token_fn, graph),
+            graph=graph,
             agent_names=[definitions.orchestrator.name, *(d.name for d in definitions.domains)],
             _resources=stack,
         )

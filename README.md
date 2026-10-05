@@ -5,7 +5,7 @@ save?"* CRIP's AI agents answer from **live Azure data queried with the signed-i
 permissions**, and every answer shows its proof inline: the exact Azure query, the scope, Azure's
 request id, and how fresh the data is. Read-only: CRIP never changes anything.
 
-It ships as **one container** (React UI + FastAPI API) that runs on **Azure App Service**.
+It ships as **one app** (React UI + FastAPI API) on **Azure App Service**, deployed as a code zip.
 
 ## What it can answer
 
@@ -14,20 +14,35 @@ It ships as **one container** (React UI + FastAPI API) that runs on **Azure App 
 | **CostPulse** · spend | Spend by resource group / type / service / tag; **daily trend with spike (anomaly) detection and the services that caused each spike**; **month-end forecast** | Cost Management Query + Forecast APIs |
 | **Optimizer** · savings | **Azure Advisor cost recommendations with savings estimates**; **idle/orphaned resources** (unattached disks, unused public IPs, orphaned NICs, empty App Service plans, stopped-not-deallocated VMs) **priced with their actual month-to-date cost** | Advisor, Resource Graph, Cost Management |
 | **Inventory** · resources | What exists by type / region; **tag coverage** (e.g. % of resources with an `owner` tag, worst resource groups) | Resource Graph |
+| **Governance** · posture | **Defender secure score**, Advisor **security / reliability / operations / performance**, **network exposure** (SSH/RDP open to the internet, subnets without NSG, open storage, broken peerings), **Azure Policy** compliance | Defender for Cloud, Advisor, Resource Graph, Policy |
+| **Platform** · admin | **Access review** (who holds Owner/Contributor, guests, deleted identities, with names), **estate overview** across subscriptions, **CRIP usage log** | ARM role assignments, Microsoft Graph, CRIP audit log |
 | **Orchestrator** | Routes each question to one or more specialists *by its own tool-calling decision* and composes one answer | (the specialists' results) |
 
 Multi-agent questions are the showcase. "Give me a cost overview" calls CostPulse (spend + forecast)
 and Optimizer (savings) together. The UI renders a chart per result: daily columns with spikes
 flagged, actual vs Azure forecast, ranked bars, savings and coverage tiles.
 
+## Who sees what
+
+Per subscription, decided by Azure RBAC **and/or** Entra app roles / groups ([docs/access-model.md](docs/access-model.md)):
+
+| Access | Sees |
+|---|---|
+| Azure **Reader** (or `CRIP.Reader`) | Health overview, security, network, policy, inventory: **no cost** |
+| **Cost Management Reader / Contributor / Owner** (or `CRIP.CostReader`) | All of the above **plus** spend, trends, forecast, savings |
+| **`CRIP.PlatformAdmin`** (platform group) | Every subscription + **Platform admin** area: estate overview, access review, usage log, settings & health |
+
+Enforced on the server for every call; refusals say exactly which role to ask for, and every request is in the usage log.
+
 ## Why it's trustworthy (the part judges ask about)
 
 - **Grounding is enforced by types, not convention.** Every tool returns an `AgentResponse`. An `ok`
   answer *cannot be constructed* without an Azure source, the query used and a data timestamp; an
   `error` cannot carry numbers. The database enforces the same rule with a CHECK constraint.
-- **The user's own identity, not a service account.** Every Azure data call uses the user's token,
-  exchanged on-behalf-of (OBO). Answers are naturally limited to what *that user* may see. The app's
-  own managed identity can't read customer data.
+- **Access checked per user, per subscription.** CRIP's read-only identity reads Azure, but every
+  call is first authorised against the user's own Azure RBAC / Entra roles, and each source records
+  how they were allowed in (`rbac:Reader`, `app-role:CRIP.PlatformAdmin`). (A per-user on-behalf-of
+  mode is available too: `CRIP_AZURE_ACCESS_MODE=user_obo`.)
 - **Provenance bypasses the model.** Citations shown in the UI are the tools' own results, attached by
   the backend, never re-typed by the LLM.
 - **Honest failures.** A 403 says "you need Cost Management Reader on X". No data says no data.
@@ -43,7 +58,7 @@ flagged, actual vs Azure forecast, ranked bars, savings and coverage tiles.
 ## Repository layout
 
 ```
-Dockerfile          the one image: builds the UI, serves UI + API (App Service ready)
+Dockerfile          local testing image (same app; Azure uses the code zip below)
 backend/            FastAPI app (Python 3.12), package crip_backend
   crip_backend/
     contracts.py        AgentResponse / ChatResponse / ErrorEnvelope (grounding enforced by validators)
@@ -55,8 +70,9 @@ backend/            FastAPI app (Python 3.12), package crip_backend
     api/ main.py        /api/chat, /api/capabilities, /api/tools/{name}, /health, UI + /config.js
 foundry/            agent definitions (JSON + instructions) and the registration CLI
 frontend/           React + TypeScript chat UI with MSAL sign-in and charts
-infra/appservice/   Bicep: managed identity, ACR, App Insights, App Service plan + web app
-.azuredevops/       pipeline: test -> (provision) -> build+push image -> deploy -> smoke test
+infra/appservice/   Bicep: managed identity, App Insights, App Service plan + Python web app
+.azuredevops/       pipeline: test -> (provision) -> build zip -> deploy -> smoke test
+scripts/            deploy-appservice.sh + build_package.py (zip deploy), setup scripts
 scripts/            setup-entra-app.sh, local-e2e.sh, init_local_secrets.py
 docs/               architecture, azure-setup, pipeline, demo-script, known-simplifications
 tests/              pytest suite
@@ -64,7 +80,7 @@ tests/              pytest suite
 
 ## The app
 
-A sidebar app with six pages, with the logo on every page (see [docs/branding.md](docs/branding.md)):
+A sidebar app with the logo on every page (see [docs/branding.md](docs/branding.md)). Pages adapt to your access:
 
 | Page | What it shows |
 |---|---|
@@ -72,7 +88,10 @@ A sidebar app with six pages, with the logo on every page (see [docs/branding.md
 | **Spend** | Actual cost by resource group / service / resource type / tag, for any of four time windows |
 | **Trends & forecast** | Daily cost (14-90 days), spike cards with the services that drove them, month-end forecast, top services |
 | **Savings** | Advisor recommendations ranked by savings, idle resources priced with real cost |
+| **Security & reliability** | Secure score, top security findings, Advisor beyond cost |
+| **Network & policy** | Network exposure checks, Azure Policy compliance by assignment |
 | **Inventory & tags** | Resources by type and region, tag coverage for owner / costCenter / environment / project |
+| **Platform admin** (admins) | Estate overview, Access review, Usage log, Settings & health |
 | **Ask CRIP** | The multi-agent chat: one question, several specialists, one grounded answer |
 
 Dashboard pages call the grounded tools directly (`/api/tools/{name}`): fast, deterministic, no LLM,
@@ -81,7 +100,8 @@ and every card shows its proof. *Ask CRIP* goes through the Foundry agents.
 **Demo mode** (`CRIP_UI_DEMO_MODE=true`, the default for `docker compose` without a `.env`) shows every
 screen with clearly labelled **sample data** and no sign-in, for previews. A banner and a
 "Sample data · not from Azure" chip on every card make it impossible to mistake for real data. It is
-always off in Azure (Bicep sets it to `false`).
+always off in Azure (Bicep sets it to `false`). In demo mode a **View as** switch (or `?as=reader|cost|admin`)
+shows how the app looks for each access level.
 
 ## Run it
 
@@ -117,10 +137,12 @@ Open http://localhost:8000, sign in, ask. (`cd frontend && npm run dev` gives ho
 
 Follow **[docs/azure-setup.md](docs/azure-setup.md)** (about 15 minutes). In short:
 
-1. `az deployment group create` with [`infra/appservice/main.bicep`](infra/appservice/main.bicep): creates the managed identity, ACR, App Insights and web app;
+1. `az deployment group create` with [`infra/appservice/main.bicep`](infra/appservice/main.bicep): creates the managed identity, App Insights and the Python web app;
 2. `scripts/setup-entra-app.sh --url <web app url> --mi-principal-id <from Bicep outputs>`: sign-in plus OBO with no secret;
 3. give the managed identity **Azure AI User** on your Foundry project;
-4. build and push the image (`az acr build` or the pipeline): the app registers its agents on startup.
+4. `bash scripts/deploy-appservice.sh -g <rg>` (or the pipeline): builds the zip, deploys it and smoke-tests the site; the app registers its agents on startup.
+
+No app registration yet? Deploy with `uiDemoMode=true` first to get a live sample-data preview: [docs/pipeline.md](docs/pipeline.md#first-deployment-before-the-app-registration-exists).
 
 CI/CD: [docs/pipeline.md](docs/pipeline.md). For the demo: [docs/demo-script.md](docs/demo-script.md).
 
@@ -136,7 +158,7 @@ definitions and the model routes. Walkthrough:
 Every answer's sources are stored in `agent_invocations`:
 
 ```bash
-# SQLite (default; in App Service: SSH into the container)
+# SQLite (default; in App Service: open an SSH session from the portal)
 python -c "import sqlite3; [print(r) for r in sqlite3.connect('/home/data/crip.db').execute(
   \"select created_at, agent_name, tool_name, status, data_timestamp, json_extract(sources,'$[0].auth'),
    json_extract(sources,'$[0].request_id') from agent_invocations order by created_at desc limit 10\")]"

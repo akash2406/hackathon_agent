@@ -36,7 +36,7 @@ def test_orchestrator_tools_are_generated_from_domain_definitions():
     defs = load_definitions(DEFINITIONS)
     specs = {s["name"]: s for s in build_agent_specs(defs)}
     assert {t["name"] for t in specs[defs.orchestrator.name]["tools"]} == {d.delegation_tool.name for d in defs.domains}
-    assert {d.key for d in defs.domains} == {"costpulse", "optimizer", "inventory"}
+    assert {d.key for d in defs.domains} == {"costpulse", "optimizer", "inventory", "governance", "netdiag", "platform"}
     for d in defs.domains:
         assert {t["name"] for t in specs[d.name]["tools"]} == d.tool_names
         assert d.examples, f"{d.key} should ship example questions for the UI"
@@ -69,5 +69,5 @@ async def test_upsert_updates_existing_and_creates_missing_agents():
     client = FakeAsyncAgentsClient([SimpleNamespace(name="crip-costpulse", id="asst_existing")])
     ids = await upsert_agents(client, build_agent_specs(load_definitions(DEFINITIONS)), "gpt-4o")
     assert client.updated == [("asst_existing", "crip-costpulse")]
-    assert set(client.created) == {"crip-optimizer", "crip-inventory", "crip-orchestrator"}
+    assert set(client.created) == {"crip-optimizer", "crip-inventory", "crip-governance", "crip-netdiag", "crip-platform", "crip-orchestrator"}
     assert ids["crip-costpulse"] == "asst_existing"

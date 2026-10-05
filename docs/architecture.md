@@ -3,7 +3,7 @@
 ## Components
 
 ```
- Browser (React SPA, MSAL)                          Azure App Service (one Linux container)
+ Browser (React SPA, MSAL)                          Azure App Service (Linux, Python 3.12)   
    │  GET /, /assets/*, /config.js  ───────────►   FastAPI  ── serves the built UI + runtime config
    │  POST /api/chat  (Bearer: token for CRIP API)──►       ── /api: validates token, runs agents, executes tools
                                                      │   │   │
@@ -22,7 +22,21 @@
 **Agents** live in Foundry. **Tools** are backend code. The app runs agents and executes the function
 tools they request.
 
-## A question, step by step (the OBO flow)
+## Access: who may see what (default mode)
+
+Every request first resolves the user's **access per subscription** from Azure RBAC (role assignments
+at the subscription or above), Entra **app roles** (`CRIP.PlatformAdmin`, `CRIP.CostReader`,
+`CRIP.Reader`) and mapped **security groups**: levels *resources* < *cost*, plus a *platform admin*
+flag ([access-model.md](access-model.md), [access/resolver.py](../backend/crip_backend/access/resolver.py)).
+`tools/registry.execute_tool` checks each tool's requirement against that before any Azure call and
+stamps every `Source` with `auth` (`app_identity` / `user_obo`) and `authorized_via` (e.g.
+`rbac:Reader`). Every request, denials included, goes to the `access_log` table (admin Usage log).
+
+In the default **`app_identity`** mode, CRIP's managed identity (read-only on the management group)
+makes the Azure calls once the user has been authorised. The **`user_obo`** mode below makes every call
+as the user instead.
+
+## A question, step by step (the OBO flow, `user_obo` mode)
 
 The property everything rests on: **every Azure data call carries the signed-in user's own
 delegated token.** No platform identity reads customer data, and there is no application-level scope
@@ -68,7 +82,7 @@ yield another user's token.
 |---|---|---|
 | User's CRIP token (from the SPA) | Authenticating to CRIP; OBO `user_assertion` | Sent to Azure directly |
 | User's OBO ARM token | Cost Management, Advisor, Resource Graph, subscription list | Foundry |
-| Web app managed identity | Foundry (run + register agents), ACR pull, OBO client assertion | Reading any customer Azure data |
+| Web app managed identity | Foundry (run + register agents), OBO client assertion | Reading any customer Azure data |
 | Key Vault references / `.secrets/` | Optional DB URL, optional OBO client secret | |
 
 ## The contract, and why grounding is structural
@@ -121,9 +135,11 @@ No `if "cost" in message`. That breaks the moment questions span domains, and th
 ("why did my bill go up and what can I do?" needs CostPulse **and** Optimizer).
 `tests/test_orchestrator_routing.py` proves both directions.
 
-## Hosting: one container on App Service
+## Hosting: one app on App Service
 
-- The [`Dockerfile`](../Dockerfile) builds the UI with Node, then runs FastAPI, which serves `/api`,
+- [`scripts/build_package.py`](../scripts/build_package.py) builds the UI with Node and zips it with
+  the API and the agent definitions; [`scripts/deploy-appservice.sh`](../scripts/deploy-appservice.sh)
+  zip-deploys it and App Service installs the Python packages. FastAPI serves `/api`,
   `/health`, a generated `/config.js`, and the SPA with deep-link fallback. One origin means no CORS
   and one redirect URI.
 - Configuration = App Settings ([config.py](../backend/crip_backend/config.py)); secrets by name
@@ -132,7 +148,8 @@ No `if "cost" in message`. That breaks the moment questions span domains, and th
 - Storage: SQLite at `/home/data/crip.db` (App Service persistent storage) by default; PostgreSQL if
   `database-url` is configured.
 - Agents: created/updated by the app at startup (`CRIP_REGISTER_AGENTS_ON_STARTUP`) from
-  `foundry/definitions`, so deploying a new image also deploys new agent instructions and tools.
+  `foundry/definitions`, so deploying a new package also deploys new agent instructions and tools.
+- The [`Dockerfile`](../Dockerfile) runs the same app locally (`scripts/local-e2e.sh`).
 
 ## Failure behaviour
 
@@ -198,6 +215,6 @@ tool. **Its description is the routing signal**:
 
 `pytest` (`test_foundry_definitions.py` fails if a tool has no handler or the schema and model
 disagree; copy `tests/test_optimizer_tools.py` for the tool). Optionally add a renderer for the new
-`data.kind` in `frontend/src/components/Insights.tsx`. Deploy the image: at startup the app creates
+`data.kind` in `frontend/src/components/Insights.tsx`. Deploy the package: at startup the app creates
 `crip-budgets` **and updates `crip-orchestrator`** with the new `ask_budgets` tool. The model starts
 routing to it; no routing code changed.

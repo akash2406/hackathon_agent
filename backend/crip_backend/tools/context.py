@@ -1,27 +1,31 @@
 """Per-question context handed to every tool handler.
 
-Created by the chat endpoint for each question and threaded through the
-Orchestrator run, any domain-agent runs it delegates to, and every tool call
-those runs make. It carries *who is asking* (so tools can obtain the user's OBO
-token) and collects every ``AgentResponse`` a tool produces, which is how
-provenance reaches the API response and the ``agent_invocations`` table without
-ever passing through a model's text.
+Created for each chat question or dashboard call and threaded through the
+Orchestrator run, any domain-agent runs, and every tool call. It carries *who is
+asking* and *what they may see* (``access``), how Azure is read (``tokens``),
+and collects every ``AgentResponse`` a tool produces, which is how provenance
+reaches the API response and the ``agent_invocations`` table without ever
+passing through a model's text.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field, replace
-from typing import Protocol
+from typing import Any, Protocol
 from uuid import UUID
 
+from ..access.model import UserAccess
 from ..auth.entra import AuthenticatedUser
-from ..auth.obo import DelegatedToken
 from ..azure_clients.arm import ArmClient
 from ..contracts import AgentResponse
 
 
-class DelegatedTokenSource(Protocol):
-    async def get_token(self, *, session_id: UUID | None, user: AuthenticatedUser) -> DelegatedToken: ...
+class AzureDataTokens(Protocol):
+    """``OnBehalfOfTokenProvider`` (user_obo) or ``AppIdentityTokens`` (app_identity)."""
+
+    kind: str
+
+    async def token_for(self, *, session_id: UUID | None, user: AuthenticatedUser) -> str: ...
 
 
 @dataclass(frozen=True)
@@ -36,18 +40,25 @@ class ToolContribution:
 class ToolContext:
     user: AuthenticatedUser
     session_id: UUID | None
-    tokens: DelegatedTokenSource
+    tokens: AzureDataTokens
     arm: ArmClient
+    # None only in unit tests that exercise tools without the access layer.
+    access: UserAccess | None = None
+    # CRIP's own store, for the usage-log tool (platform admins).
+    repository: Any | None = None
+    # Microsoft Graph (principal names for the access review) and the management
+    # group CRIP covers (estate-wide cost); both optional.
+    graph: Any | None = None
+    management_group_id: str | None = None
     contributions: list[ToolContribution] = field(default_factory=list)
 
+    @property
+    def auth_kind(self) -> str:
+        return self.tokens.kind
+
     async def arm_token(self) -> str:
-        """The signed-in user's OBO-exchanged ARM token. The only token tools may send to Azure."""
-        token = await self.tokens.get_token(session_id=self.session_id, user=self.user)
-        # Re-checked on every use, including cache hits: cheap, and it makes
-        # "Azure only ever sees the user's own token" an enforced invariant
-        # rather than a property of how the cache happens to be keyed.
-        token.assert_belongs_to(self.user)
-        return token.access_token
+        """The token tools send to Azure. In user_obo mode the provider re-verifies it is the user's own."""
+        return await self.tokens.token_for(session_id=self.session_id, user=self.user)
 
     def child(self) -> ToolContext:
         """A context for a delegated domain-agent run, with its own contribution list.

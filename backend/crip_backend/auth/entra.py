@@ -33,6 +33,10 @@ class AuthenticatedUser:
     scopes: frozenset[str]
     display_name: str | None = None
     username: str | None = None  # UPN, for display only; it can change, so never used as a key
+    # Entra app roles (roles claim) and security groups (groups claim) used by access.resolver.
+    roles: frozenset[str] = frozenset()
+    groups: frozenset[str] = frozenset()
+    groups_overage: bool = False  # too many groups for the token; resolver asks Graph
     # Kept for the OBO exchange; excluded from repr so it can't leak into logs.
     raw_token: str = field(default="", repr=False)
 
@@ -91,6 +95,9 @@ class EntraTokenValidator:
             scopes=scopes,
             display_name=claims.get("name"),
             username=claims.get("preferred_username") or claims.get("upn"),
+            roles=frozenset(str(r) for r in claims.get("roles", []) or []),
+            groups=frozenset(str(g) for g in claims.get("groups", []) or []),
+            groups_overage="groups" in (claims.get("_claim_names") or {}) or bool(claims.get("hasgroups")),
             raw_token=token,
         )
 

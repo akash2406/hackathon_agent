@@ -1,0 +1,69 @@
+{
+  "role": "domain",
+  "key": "governance",
+  "name": "crip-governance",
+  "description": "CRIP domain agent: security, reliability, network and policy posture of a subscription.",
+  "summary": "Security score, Advisor reliability and security advice, network exposure and policy compliance.",
+  "instructions_file": "governance.md",
+  "delegation_tool": {
+    "name": "ask_governance",
+    "description": "Ask the Governance agent about the POSTURE of a subscription, not its cost: security (Defender for Cloud secure score, unhealthy security recommendations), reliability / operational excellence / performance advice from Azure Advisor, NETWORK exposure (SSH/RDP open to the internet, subnets without NSGs, storage reachable from all networks, broken VNet peerings, public IPs) and Azure POLICY compliance. Answers come from Azure Advisor, Defender for Cloud, Azure Resource Graph and Azure Policy."
+  },
+  "examples": [
+    "Do I have any network security issues?",
+    "What is my secure score and what should I fix first?",
+    "Which policies are my resources not compliant with?"
+  ],
+  "tools": [
+    {
+      "name": "governance_advisor_recommendations",
+      "description": "Azure Advisor recommendations other than cost (security, reliability, operational excellence, performance), ordered by impact.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "scope": {"type": "string", "description": "Subscription id (GUID), /subscriptions/<id>, or /subscriptions/<id>/resourceGroups/<name>."},
+          "category": {"type": "string", "enum": ["all", "security", "reliability", "operational_excellence", "performance"], "description": "Advisor category. Defaults to all non-cost categories."},
+          "top_n": {"type": "integer", "minimum": 1, "maximum": 50, "description": "How many recommendations to itemise. Defaults to 15."}
+        },
+        "required": ["scope"],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "governance_security_posture",
+      "description": "Defender for Cloud secure score and the unhealthy security recommendations affecting the most resources.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "scope": {"type": "string", "description": "Subscription id (GUID), /subscriptions/<id>, or /subscriptions/<id>/resourceGroups/<name>."}
+        },
+        "required": ["scope"],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "governance_network_posture",
+      "description": "Network configuration checks: SSH/RDP open to the internet, subnets without an NSG, storage accounts reachable from all networks, VNet peerings not connected, public IP addresses.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "scope": {"type": "string", "description": "Subscription id (GUID), /subscriptions/<id>, or /subscriptions/<id>/resourceGroups/<name>."}
+        },
+        "required": ["scope"],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "governance_policy_compliance",
+      "description": "Azure Policy compliance: number of non-compliant resources and the assignments they violate.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "scope": {"type": "string", "description": "Subscription id (GUID), /subscriptions/<id>, or /subscriptions/<id>/resourceGroups/<name>."}
+        },
+        "required": ["scope"],
+        "additionalProperties": false
+      }
+    }
+  ]
+}

@@ -6,7 +6,9 @@
  * response is visibly labelled: a banner in the shell, a caveat on every card,
  * and request ids of "demo-sample". The real app never loads this module.
  */
-import type { AgentResponse, ChatResponse, Source } from "../types";
+import type { AdminSettings, AgentResponse, ChatResponse, Me, Source, UsageReport } from "../types";
+
+export type Persona = "admin" | "cost" | "reader";
 
 const DEMO_CAVEAT = "SAMPLE DATA for UI preview. Not from Azure.";
 const SUB_A = "6f1c2d3e-4a5b-4c6d-8e9f-0a1b2c3d4e5f";
@@ -180,7 +182,187 @@ function subscriptions(): AgentResponse {
   }, daysAgo(0));
 }
 
-export function sampleTool(name: string, args: Record<string, unknown>): AgentResponse {
+// --------------------------------------------------------------------------- governance (resources level)
+
+function advisorPosture(args: Record<string, unknown>): AgentResponse {
+  const scope = scopeOf(args);
+  const recs = [
+    { category: "security", impact: "High", problem: "MFA should be enabled for accounts with owner permissions", solution: "Enforce MFA via Conditional Access", resource: "subscription" },
+    { category: "reliability", impact: "High", problem: "Use availability zones for better resiliency", solution: "Move vmss-api-prod to a zone-redundant configuration", resource: "vmss-api-prod" },
+    { category: "security", impact: "Medium", problem: "Storage accounts should restrict network access", solution: "Add private endpoints to stdatalake01", resource: "stdatalake01" },
+    { category: "operational_excellence", impact: "Medium", problem: "Create an Azure Service Health alert", solution: "Add a Service Health alert for australiaeast", resource: "subscription" },
+    { category: "performance", impact: "Low", problem: "Upgrade to a newer VM generation", solution: "Move vm-legacy-report to Dv5", resource: "vm-legacy-report" },
+    { category: "reliability", impact: "Medium", problem: "Enable soft delete for blobs", solution: "Turn on blob soft delete on stbackups", resource: "stbackups" },
+  ];
+  const by = new Map<string, { category: string; High: number; Medium: number; Low: number; total: number }>();
+  for (const r of recs) {
+    const e = by.get(r.category) ?? { category: r.category, High: 0, Medium: 0, Low: 0, total: 0 };
+    e[r.impact as "High" | "Medium" | "Low"] += 1;
+    e.total += 1;
+    by.set(r.category, e);
+  }
+  return ok("governance_advisor_recommendations", "governance", scope, "Azure Advisor lists 6 non-cost recommendations, 2 high impact.", {
+    kind: "advisor_posture", scope, total: recs.length, high_impact: 2, by_category: [...by.values()], recommendations: recs,
+  }, daysAgo(0));
+}
+
+function security(args: Record<string, unknown>): AgentResponse {
+  const scope = scopeOf(args);
+  return ok("governance_security_posture", "governance", scope, "Secure score 64.2%; 5 unhealthy recommendations.", {
+    kind: "security_posture", scope, secure_score_pct: 64.2, secure_score_current: 32.1, secure_score_max: 50,
+    unhealthy_by_severity: { High: 7, Medium: 18, Low: 4 },
+    findings: [
+      { recommendation: "Machines should have vulnerability findings resolved", severity: "High", resources: 5 },
+      { recommendation: "Management ports should be closed on your virtual machines", severity: "High", resources: 2 },
+      { recommendation: "Storage accounts should restrict network access", severity: "Medium", resources: 6 },
+      { recommendation: "System updates should be installed on your machines", severity: "Medium", resources: 12 },
+      { recommendation: "Diagnostic logs in Key Vault should be enabled", severity: "Low", resources: 4 },
+    ],
+  }, daysAgo(0), ["Defender for Cloud recalculates the secure score periodically."]);
+}
+
+function network(args: Record<string, unknown>): AgentResponse {
+  const scope = scopeOf(args);
+  const findings = [
+    { check: "open_management_ports", title: "Management ports (SSH/RDP) open to the internet", severity: "High", count: 2,
+      items: [{ name: "nsg-jumpbox / allow-rdp", resource_group: "rg-devtest", detail: "from * to port 3389" }, { name: "nsg-poc / ssh-any", resource_group: "rg-devtest", detail: "from Internet to port 22" }] },
+    { check: "subnets_without_nsg", title: "Subnets without a network security group", severity: "Medium", count: 3,
+      items: [{ name: "vnet-spoke-app / snet-batch", resource_group: "rg-network-hub", detail: "10.20.4.0/24" }, { name: "vnet-spoke-data / snet-etl", resource_group: "rg-data-lake", detail: "10.30.2.0/24" }, { name: "vnet-devtest / default", resource_group: "rg-devtest", detail: "10.90.0.0/24" }] },
+    { check: "storage_open_to_all_networks", title: "Storage accounts reachable from all networks", severity: "Medium", count: 2,
+      items: [{ name: "stdatalake01", resource_group: "rg-data-lake", detail: "allowBlobPublicAccess=false" }, { name: "stscratch", resource_group: "rg-devtest", detail: "allowBlobPublicAccess=true" }] },
+    { check: "peerings_not_connected", title: "VNet peerings not in Connected state", severity: "Medium", count: 1,
+      items: [{ name: "vnet-hub / to-legacy", resource_group: "rg-network-hub", detail: "Disconnected" }] },
+    { check: "public_ip_addresses", title: "Public IP addresses (review exposure)", severity: "Info", count: 17, items: [] },
+  ];
+  return ok("governance_network_posture", "governance", scope, "8 network issues found; 17 public IPs.", { kind: "network_posture", scope, issue_count: 8, findings }, daysAgo(0),
+    ["Checks are heuristics on configuration; some findings may be intentional."]);
+}
+
+function policy(args: Record<string, unknown>): AgentResponse {
+  const scope = scopeOf(args);
+  return ok("governance_policy_compliance", "governance", scope, "41 resources are non-compliant with Azure Policy.", {
+    kind: "policy_compliance", scope, non_compliant_resources: 41, assignment_count: 12,
+    by_assignment: [
+      { assignment: "Require an 'owner' tag on resources", non_compliant_resources: 19 },
+      { assignment: "Allowed locations (Australia)", non_compliant_resources: 9 },
+      { assignment: "Storage accounts should use private link", non_compliant_resources: 7 },
+      { assignment: "Azure Security Benchmark", non_compliant_resources: 6 },
+    ],
+  }, daysAgo(0));
+}
+
+// --------------------------------------------------------------------------- platform (admin)
+
+function accessReview(args: Record<string, unknown>): AgentResponse {
+  const scope = scopeOf(args);
+  let n = 0;
+  const a = (name: string, upn: string | null, type: string, role: string, inherited = false, guest = false, orphaned = false) => ({
+    principal_id: `demo-principal-${++n}`, name: orphaned ? null : name, upn, principal_type: type, guest, role, inherited, orphaned,
+    scope: inherited ? "/providers/Microsoft.Management/managementGroups/platform" : scope,
+  });
+  const assignments = [
+    a("Platform Owners", null, "group", "Owner", true),
+    a("Priya Sharma", "priya.sharma@example.com", "user", "Owner"),
+    a("Tom Nguyen", "tom.nguyen@example.com", "user", "Owner"),
+    a("vendor-consultant", "consultant_partner.com#EXT#@example.com", "user", "Contributor", false, true),
+    a("sp-github-deploy", "6c1f-app", "servicePrincipal", "Contributor"),
+    a("FinOps Analysts", null, "group", "Cost Management Reader", true),
+    a("App Team Readers", null, "group", "Reader"),
+    a("(deleted)", null, "Unknown", "Reader", false, false, true),
+  ];
+  return ok("platform_access_review", "platform", scope, "8 role assignments: 3 Owners, 3 privileged direct user grants, 1 guest, 1 deleted identity.", {
+    kind: "access_review", scope, assignment_count: assignments.length,
+    findings: [
+      { finding: "Owners on the subscription", severity: "Info", count: 3, advice: "Keep Owners to a small, named set (Microsoft recommends no more than 3)." },
+      { finding: "Privileged roles granted directly to users", severity: "Medium", count: 3, advice: "Grant privileged roles to groups (ideally via PIM), not individual users." },
+      { finding: "Guest users with privileged roles", severity: "High", count: 1, advice: "Review external accounts with Owner/Contributor access." },
+      { finding: "Assignments to deleted identities", severity: "Low", count: 1, advice: "Remove role assignments whose principal no longer exists." },
+    ],
+    assignments,
+  }, daysAgo(0));
+}
+
+function estate(): AgentResponse {
+  const rows = [
+    { subscription_id: SUB_A, name: "Hackathon Production (sample)", cost_mtd: 7972.4, currency: "AUD", secure_score_pct: 64.2, advisor_cost: 5, advisor_security: 9, advisor_reliability: 4, advisor_high_impact: 6 },
+    { subscription_id: SUB_B, name: "Hackathon Dev/Test (sample)", cost_mtd: 2410.8, currency: "AUD", secure_score_pct: 48.9, advisor_cost: 7, advisor_security: 14, advisor_reliability: 2, advisor_high_impact: 9 },
+    { subscription_id: "1b2c3d4e-0000-4000-8000-000000000003", name: "Shared Networking (sample)", cost_mtd: 1180.2, currency: "AUD", secure_score_pct: 81.5, advisor_cost: 1, advisor_security: 3, advisor_reliability: 5, advisor_high_impact: 2 },
+    { subscription_id: "1b2c3d4e-0000-4000-8000-000000000004", name: "Data Platform (sample)", cost_mtd: 5320.0, currency: "AUD", secure_score_pct: 71.0, advisor_cost: 3, advisor_security: 6, advisor_reliability: 3, advisor_high_impact: 4 },
+  ].sort((x, y) => y.cost_mtd - x.cost_mtd);
+  return ok("platform_estate_overview", "platform", "estate", "4 subscriptions; AUD 16,883.40 month-to-date.", {
+    kind: "estate", subscription_count: rows.length, total_cost_mtd_by_currency: { AUD: 16883.4 }, subscriptions: rows,
+  }, daysAgo(1));
+}
+
+// --------------------------------------------------------------------------- personas & access
+
+const COST_TOOLS = new Set(["costpulse_query_costs", "costpulse_cost_trend", "costpulse_forecast_month_end", "optimizer_advisor_recommendations", "optimizer_find_idle_resources"]);
+const ADMIN_TOOLS = new Set(["platform_access_review", "platform_estate_overview", "platform_crip_usage"]);
+
+function denied(name: string, reason: string): AgentResponse {
+  return {
+    agent: name.split("_")[0], status: "error", answer: `Access denied: ${reason}`, confidence: { level: "low", score: 0 },
+    data: null, query_used: null, data_timestamp: null, sources: [], caveats: ["No Azure call was made."],
+  };
+}
+
+export function sampleMe(persona: Persona): Me {
+  const level = persona === "reader" ? "resources" : "cost";
+  const via = persona === "admin" ? ["app-role:CRIP.PlatformAdmin"] : persona === "cost" ? ["rbac:Cost Management Reader"] : ["rbac:Reader"];
+  return {
+    user: { object_id: "demo", name: { admin: "Demo Platform Admin", cost: "Demo Cost Viewer", reader: "Demo Reader" }[persona], username: "demo@example.com" },
+    access_mode: "app_identity",
+    is_platform_admin: persona === "admin",
+    global_level: persona === "admin" ? "cost" : "none",
+    global_via: persona === "admin" ? via : [],
+    subscriptions: [
+      { subscription_id: SUB_A, display_name: "Hackathon Production (sample)", level, via },
+      { subscription_id: SUB_B, display_name: "Hackathon Dev/Test (sample)", level, via },
+    ],
+    resolved_at: new Date().toISOString(),
+    warnings: [],
+  };
+}
+
+export function sampleUsage(days: number): UsageReport {
+  const people = ["Priya Sharma", "Tom Nguyen", "Alex Chen", "Sam Wilson", "Jordan Lee"];
+  const actions = ["chat", "tool:costpulse_query_costs", "tool:governance_network_posture", "tool:optimizer_advisor_recommendations", "me", "tool:costpulse_cost_trend"];
+  const events = Array.from({ length: 24 }, (_, i) => ({
+    at: new Date(Date.now() - i * 37 * 60_000).toISOString(),
+    user_name: people[i % people.length],
+    action: actions[i % actions.length],
+    scope: i % 4 === 0 ? null : `/subscriptions/${i % 3 ? SUB_A : SUB_B}`,
+    outcome: i === 5 || i === 13 ? "denied" : i === 9 ? "error" : "ok",
+    latency_ms: 300 + ((i * 97) % 2400),
+    detail: actions[i % actions.length] === "chat" ? "Why did my costs go up last week?" : null,
+  }));
+  return {
+    days, total_events: 312, distinct_users: 18, denied: 7,
+    top_users: people.map((user, i) => ({ user, events: 74 - i * 11 })),
+    by_action: [{ name: "dashboard", events: 221 }, { name: "chat", events: 58 }, { name: "me", events: 33 }],
+    by_scope: [{ name: `/subscriptions/${SUB_A}`, events: 190 }, { name: `/subscriptions/${SUB_B}`, events: 89 }],
+    events,
+  };
+}
+
+export function sampleSettings(): AdminSettings {
+  return {
+    access_mode: "app_identity", management_group_id: "platform (sample)", explicit_subscriptions: [], rbac_access_check: true,
+    group_mappings: { platform_admin: true, cost_reader: true, reader: false }, access_cache_seconds: 900, subscriptions_in_scope: 4,
+    agents: ["crip-orchestrator", "crip-costpulse", "crip-optimizer", "crip-inventory", "crip-governance", "crip-platform"],
+    foundry_project_endpoint: "https://sample.services.ai.azure.com/api/projects/crip", foundry_model_deployment: "gpt-4o",
+    register_agents_on_startup: true, graph: "ok", storage: "sqlite", environment: "demo",
+  };
+}
+
+export function sampleTool(name: string, args: Record<string, unknown>, persona: Persona = "admin"): AgentResponse {
+  const priced = !(name === "optimizer_find_idle_resources" && args.include_cost === false);
+  if (persona === "reader" && COST_TOOLS.has(name) && priced) {
+    return denied(name, "Your access to Hackathon Production (sample) allows resource views only. Cost views need Cost Management Reader, Contributor or Owner on the subscription, or the CRIP.CostReader role.");
+  }
+  if (persona !== "admin" && ADMIN_TOOLS.has(name)) {
+    return denied(name, "This needs the CRIP Platform admin role (app role CRIP.PlatformAdmin or a platform group).");
+  }
   switch (name) {
     case "costpulse_query_costs": return queryCosts(args);
     case "costpulse_cost_trend": return costTrend(args);
@@ -189,21 +371,31 @@ export function sampleTool(name: string, args: Record<string, unknown>): AgentRe
     case "optimizer_advisor_recommendations": return advisor(args);
     case "optimizer_find_idle_resources": return idle(args);
     case "inventory_resource_summary": return inventory(args);
+    case "governance_advisor_recommendations": return advisorPosture(args);
+    case "governance_security_posture": return security(args);
+    case "governance_network_posture": return network(args);
+    case "governance_policy_compliance": return policy(args);
+    case "platform_access_review": return accessReview(args);
+    case "platform_estate_overview": return estate();
     default: throw new Error(`No sample data for ${name}`);
   }
 }
 
-export function sampleChat(message: string): ChatResponse {
+export function sampleChat(message: string, persona: Persona = "admin"): ChatResponse {
   const scope = { scope: `/subscriptions/${SUB_A}` };
-  const contributions = [forecast(scope), costTrend({ ...scope, days: 30 }), advisor(scope), idle(scope)];
+  const base = { session_id: "demo-session", message_id: crypto.randomUUID(), status: "ok" as const, grounded: true, created_at: new Date().toISOString(), caveats: [DEMO_CAVEAT] };
+  if (persona === "reader") {
+    return {
+      ...base,
+      contributions: [security(scope), network(scope)],
+      answer:
+        `(Sample answer. You asked: "${message}")\n\nYour access to this subscription covers resources, not cost, so I can't show spend figures. ` +
+        "On posture: the secure score is 64.2%, and 2 network security groups allow SSH/RDP from the internet (nsg-jumpbox, nsg-poc). That is the first thing to fix.",
+    };
+  }
   return {
-    session_id: "demo-session",
-    message_id: crypto.randomUUID(),
-    status: "ok",
-    grounded: true,
-    created_at: new Date().toISOString(),
-    caveats: [DEMO_CAVEAT],
-    contributions,
+    ...base,
+    contributions: [forecast(scope), costTrend({ ...scope, days: 30 }), advisor(scope), idle(scope)],
     answer:
       `(Sample answer: in the real app this is composed by the Orchestrator from live Azure data. You asked: "${message}")\n\n` +
       "You're on track for about AUD 8,240 this month (Azure's forecast). One spike stands out: Azure OpenAI drove an extra ~AUD 390 on a single day.\n\n" +
